@@ -101,6 +101,9 @@ export class RoutePaths {
   static get promptsPage() {
     return createMLflowRoutePath('/prompts');
   }
+  static get res28Page() {
+    return createMLflowRoutePath('http://res28.itu.dk');
+  }
   static get promptDetailsPage() {
     return createMLflowRoutePath('/prompts/:promptName');
   }
@@ -268,6 +271,10 @@ class Routes {
    */
   static get promptsPageRoute() {
     return RoutePaths.promptsPage;
+  }
+
+  static get res28PageRoute() {
+    return RoutePaths.res28Page;
   }
 
   static getPromptDetailsPageRoute(promptName: string) {

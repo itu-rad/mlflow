@@ -104,8 +104,27 @@ export function MlflowSidebar() {
         onClick: openCreatePromptModal,
         children: (
           <FormattedMessage
-            defaultMessage="Prompt"
-            description="Sidebar button inside the 'new' popover to create new prompt"
+          defaultMessage="Prompt"
+          description="Sidebar button inside the 'new' popover to create new prompt"
+          />
+        ),
+      },
+    },
+    {
+      key: 'res28',
+      icon: <BeakerIcon />,
+      linkProps: {
+        to: ExperimentTrackingRoutes.res28PageRoute,
+        isActive: () => false,
+        children: <FormattedMessage defaultMessage="Res28" description="Siass tab" />,
+      },
+      dropdownProps: {
+        componentId: 'mlflow_sidebar.create_model_button',
+        onClick: () => { const newWindow = window.open("http://res28.itu.dk", '_blank'); newWindow?.focus(); },
+        children: (
+          <FormattedMessage
+            defaultMessage="Model"
+            description="Sidebar button inside the 'new' popover to create new model"
           />
         ),
       },
