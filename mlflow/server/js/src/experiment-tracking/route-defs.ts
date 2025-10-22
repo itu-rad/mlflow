@@ -15,6 +15,11 @@ const getPromptPagesRouteDefs = () => {
       element: createLazyRouteElement(() => import('./pages/prompts/PromptsDetailsPage')),
       pageId: PageId.promptDetailsPage,
     },
+    {
+      path: RoutePaths.res28Page,
+      element: createLazyRouteElement(() => import('./pages/res28/Res28Page')),
+      pageId: PageId.res28Page,
+    },
   ];
 };
 

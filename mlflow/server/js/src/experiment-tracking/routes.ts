@@ -9,6 +9,7 @@ export enum PageId {
   home = 'mlflow.home',
   promptsPage = 'mlflow.prompts',
   promptDetailsPage = 'mlflow.prompts.details',
+  res28Page = 'mlflow.res28',
   experimentPageTabbed = 'mlflow.experiment.details.tab',
   experimentLoggedModelDetailsPageTab = 'mlflow.logged-model.details.tab',
   experimentLoggedModelDetailsPage = 'mlflow.logged-model.details',
@@ -102,7 +103,8 @@ export class RoutePaths {
     return createMLflowRoutePath('/prompts');
   }
   static get res28Page() {
-    return createMLflowRoutePath('http://res28.itu.dk');
+    // return createMLflowRoutePath('http://res28.itu.dk');
+    return createMLflowRoutePath('/res28');
   }
   static get promptDetailsPage() {
     return createMLflowRoutePath('/prompts/:promptName');
