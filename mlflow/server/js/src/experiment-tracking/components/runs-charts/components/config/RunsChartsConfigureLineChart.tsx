@@ -425,7 +425,7 @@ export const RunsChartsConfigureLineChart = ({
               } else if (value === RunsChartsLineChartXAxisType.TIME_RELATIVE) {
                 updateXAxisKey(RunsChartsLineChartXAxisType.TIME_RELATIVE);
               } else if (value === USE_GLOBAL_SETTING_KEY) {
-                updateXAxisKey(RunsChartsLineChartXAxisType.STEP, true);
+                updateXAxisKey(RunsChartsLineChartXAxisType.TIME_RELATIVE, true);
               }
             }}
           >

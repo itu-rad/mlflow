@@ -26,7 +26,7 @@ export enum RunsChartType {
   IMAGE = 'IMAGE',
 }
 
-const MIN_NUMBER_OF_STEP_FOR_LINE_COMPARISON = 1;
+// const MIN_NUMBER_OF_STEP_FOR_LINE_COMPARISON = 1;
 
 /**
  * Simple interface corresponding to `RunsChartsCardConfig`.
@@ -38,7 +38,8 @@ export type SerializedRunsChartsCardConfigCard = RunsChartsCardConfig;
 // A function to iterate across run/group data traces and determine if any metric has multiple epochs.
 // This helps to decide if we should seed the line chart or a bar chart.
 const dataTraceMetricsContainMultipleEpochs = (dataTrace: RunsChartsRunData, metricKey: string): boolean =>
-  Boolean(dataTrace.metrics?.[metricKey]?.step >= MIN_NUMBER_OF_STEP_FOR_LINE_COMPARISON);
+  // Boolean(dataTrace.metrics?.[metricKey]?.step >= MIN_NUMBER_OF_STEP_FOR_LINE_COMPARISON);
+  true;
 
 /**
  * Main class used for represent a single configured chart card with its type, configuration options etc.
@@ -517,7 +518,7 @@ export class RunsChartsLineCardConfig extends RunsChartsCardConfig {
   /**
    * Choose X axis mode - numeric step, relative time in seconds or absolute time value
    */
-  xAxisKey: RunsChartsLineChartXAxisType = RunsChartsLineChartXAxisType.STEP;
+  xAxisKey: RunsChartsLineChartXAxisType = RunsChartsLineChartXAxisType.TIME_RELATIVE;
 
   /**
    * Name of the metric to use for the X axis. Used when xAxisKey is set to 'metric'

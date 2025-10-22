@@ -176,7 +176,7 @@ export const createExperimentPageUIState = (): ExperimentPageUIState => ({
   // Auto-refresh is enabled by default
   autoRefreshEnabled: true,
   globalLineChartConfig: {
-    xAxisKey: RunsChartsLineChartXAxisType.STEP,
+    xAxisKey: RunsChartsLineChartXAxisType.TIME_RELATIVE,
     lineSmoothness: 0,
     selectedXAxisMetricKey: '',
   },

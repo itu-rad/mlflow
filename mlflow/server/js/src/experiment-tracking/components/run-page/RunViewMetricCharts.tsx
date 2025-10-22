@@ -317,7 +317,7 @@ export const RunViewMetricCharts = (props: RunViewMetricChartsProps) => {
       // Auto-refresh is enabled by default only if the flag is set
       autoRefreshEnabled: shouldEnableRunDetailsPageAutoRefresh(),
       globalLineChartConfig: {
-        xAxisKey: RunsChartsLineChartXAxisType.STEP,
+        xAxisKey: RunsChartsLineChartXAxisType.TIME_RELATIVE,
         lineSmoothness: 0,
         selectedXAxisMetricKey: '',
       },

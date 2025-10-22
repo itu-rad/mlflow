@@ -50,7 +50,7 @@ const GET_METRIC_HISTORY_MAX_RESULTS = 25000;
 // Convert X-axis type from URL to chart config
 const convertXAxisType = (selectedXAxis: string | string[] | any): RunsChartsLineChartXAxisType => {
   // Handle union type from URL parsing
-  const axisType = Array.isArray(selectedXAxis) ? selectedXAxis[0] : selectedXAxis || 'step';
+  const axisType = Array.isArray(selectedXAxis) ? selectedXAxis[0] : selectedXAxis || 'time_relative';
 
   switch (axisType) {
     case 'step':
@@ -60,7 +60,7 @@ const convertXAxisType = (selectedXAxis: string | string[] | any): RunsChartsLin
     case 'relative':
       return RunsChartsLineChartXAxisType.TIME_RELATIVE;
     default:
-      return RunsChartsLineChartXAxisType.STEP;
+      return RunsChartsLineChartXAxisType.TIME_RELATIVE;
   }
 };
 
