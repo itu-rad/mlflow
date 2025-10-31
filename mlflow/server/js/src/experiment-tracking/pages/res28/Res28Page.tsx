@@ -81,7 +81,7 @@ const Res28Page = () => {
         <iframe 
           ref={iframeRef}
           src={iframeSrc}//buildIframeUrl()}
-          title="radT Res28"
+          title="radT Analyze"
           css={{
             border: 'none',
             width: '100%',

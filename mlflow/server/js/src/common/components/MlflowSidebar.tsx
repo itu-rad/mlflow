@@ -118,7 +118,7 @@ export function MlflowSidebar() {
       linkProps: {
         to: ExperimentTrackingRoutes.res28PageRoute,
         isActive: isRes28Active,
-        children: <FormattedMessage defaultMessage="radT Res28" description="Sidebar link for res28 tab" />,
+        children: <FormattedMessage defaultMessage="radT Analyze" description="Sidebar link for res28 tab" />,
       },
       dropdownProps: {
         componentId: 'mlflow_sidebar.create_model_button',
