@@ -8,35 +8,20 @@ import ErrorUtils from '../../../common/utils/ErrorUtils';
 const Res28Page = () => {
   const { theme } = useDesignSystemTheme();
 
-  const BASE_ORIGIN = 'https://res28.itu.dk';
-  // load the res28 app at /res28 by default
-  const DEFAULT_IFRAME_SRC = `${BASE_ORIGIN}/res28`;
+  const DEFAULT_IFRAME_SRC = `https://res28.itu.dk`;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [iframeUrl, setIframeUrl] = useState<string>(DEFAULT_IFRAME_SRC);
+  const [iframeUrl, setIframeUrl] = useState<string>("undefined");
 
   const handleOpenInNewTab = () => {
     const current = iframeRef.current?.src || DEFAULT_IFRAME_SRC;
     window.open(current, '_blank');
   };
 
-  // helper: replace parent URL search/hash to match parsed iframe URL (no reload)
-  const syncParentUrlWithIframe = (parsed: URL) => {
-    try {
-      // Always set parent's pathname to /res28 and append iframe search + hash
-      const nextFull = `/res28${parsed.search || ''}${parsed.hash || ''}`;
-      const currentFull = `${window.location.pathname}${window.location.search || ''}${window.location.hash || ''}`;
-      if (currentFull !== nextFull) {
-        window.history.replaceState(null, '', nextFull);
-      }
-    } catch {
-      // ignore
-    }
-  };
-
   // Improved message handler: accept messages regardless of evt.origin but validate the reported URL
   useEffect(() => {
     const onMessage = (evt: MessageEvent) => {
       const data = evt.data;
+      console.log('Res28Page received message:', evt, data);
       let url: string | null = null;
 
       if (!data) return;
@@ -50,16 +35,11 @@ const Res28Page = () => {
 
       try {
         // normalize relative urls by providing BASE_ORIGIN as base
-        const parsed = new URL(url, BASE_ORIGIN);
-        // only accept URLs that belong to the expected base origin
-        if (parsed.origin !== BASE_ORIGIN) return;
+        const parsed = new URL(url);
 
         // Compose display URL as BASE_ORIGIN + /res28 + params
-        const display = `${BASE_ORIGIN}/res28${parsed.search || ''}${parsed.hash || ''}`;
+        const display = `/res28${parsed.search || ''}${parsed.hash || ''}`;
         setIframeUrl(display);
-
-        // update parent search/hash to match iframe (without reloading)
-        syncParentUrlWithIframe(parsed);
       } catch {
         // ignore malformed urls
       }
@@ -67,45 +47,6 @@ const Res28Page = () => {
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
-
-  // Periodically request the iframe to send its current URL and also request on load.
-  useEffect(() => {
-    const POLL_INTERVAL_MS = 1000;
-    let id: number | null = null;
-
-    const requestUrl = () => {
-      try {
-        // ask iframe for its current href; use '*' so message is delivered even if origin differs slightly
-        iframeRef.current?.contentWindow?.postMessage({ type: 'getHref' }, '*');
-      } catch {
-        // ignore
-      }
-
-      // As a best-effort fallback, try to read location href if same-origin (will throw on cross-origin)
-      try {
-        const maybeHref = iframeRef.current?.contentWindow?.location?.href;
-        if (typeof maybeHref === 'string') {
-          const parsed = new URL(maybeHref);
-          if (parsed.origin === BASE_ORIGIN) {
-            const display = `${BASE_ORIGIN}/res28${parsed.search || ''}${parsed.hash || ''}`;
-            setIframeUrl(display);
-            // sync parent's search/hash to match iframe
-            syncParentUrlWithIframe(parsed);
-          }
-        }
-      } catch {
-        // cross-origin — ignore
-      }
-    };
-
-    // request immediately and then periodically
-    requestUrl();
-    id = window.setInterval(requestUrl, POLL_INTERVAL_MS);
-
-    return () => {
-      if (id !== null) clearInterval(id);
-    };
   }, []);
 
   return (
@@ -154,14 +95,6 @@ const Res28Page = () => {
           ref={iframeRef}
           src={DEFAULT_IFRAME_SRC}
           title="radT Res28"
-          onLoad={() => {
-            try {
-              // request url on load (use '*' so delivery is not blocked by a strict targetOrigin mismatch)
-              iframeRef.current?.contentWindow?.postMessage({ type: 'res28:parent-request-url' }, '*');
-            } catch {
-              // ignore
-            }
-          }}
           css={{
             border: 'none',
             width: '100%',
