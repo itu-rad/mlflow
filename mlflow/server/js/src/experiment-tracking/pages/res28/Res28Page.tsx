@@ -32,29 +32,6 @@ const Res28Page = () => {
     window.open(current, '_blank');
   };
 
-  const readParamsFromLocation = () => {
-    try {
-      console.log('Res28Page readParamsFromLocation:', location.search);
-      const sp = new URLSearchParams(location.search);
-      return {
-        runs: sp.get('runs') ?? '',
-        charts: sp.get('charts') ?? '',
-      };
-    } catch {
-      return { runs: '', charts: '' };
-    }
-  };
-
-  useEffect(() => {
-    const onPopState = () => {
-      const p = readParamsFromLocation();
-      // setRunsParam(p.runs);
-      // setGraphsParam(p.graphs);
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
-
   // Improved message handler: accept messages regardless of evt.origin but validate the reported URL
   useEffect(() => {
     const onMessage = (evt: MessageEvent) => {

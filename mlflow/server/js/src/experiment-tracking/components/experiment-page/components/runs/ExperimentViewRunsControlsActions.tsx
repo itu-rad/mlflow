@@ -55,6 +55,11 @@ export const ExperimentViewRunsControlsActions = React.memo(
       navigate(Routes.getCompareRunPageRoute(runsSelectedList, [...new Set(experimentIds)].sort()));
     }, [navigate, runInfos, runsSelected]);
 
+    const analyzeButtonClicked = useCallback(() => {
+      const runsSelectedList = Object.keys(runsSelected);
+      navigate(Routes.getAnalyzeRunPageRoute(runsSelectedList));
+    }, [navigate, runInfos, runsSelected]);
+
     const onDeleteRun = useCallback(() => setShowDeleteRunModal(true), []);
     const onRestoreRun = useCallback(() => setShowRestoreRunModal(true), []);
     const onCloseDeleteRunModal = useCallback(() => setShowDeleteRunModal(false), []);
@@ -63,9 +68,10 @@ export const ExperimentViewRunsControlsActions = React.memo(
 
     const selectedRunsCount = Object.values(viewState.runsSelected).filter(Boolean).length;
     const canRestoreRuns = selectedRunsCount > 0;
+    const canAnalyzeRuns = selectedRunsCount > 0;
     const canRenameRuns = selectedRunsCount === 1;
     const canCompareRuns = selectedRunsCount > 1;
-    const showActionButtons = canCompareRuns || canRenameRuns || canRestoreRuns;
+    const showActionButtons = canCompareRuns || canRenameRuns || canRestoreRuns || canAnalyzeRuns;
 
     return (
       <>
@@ -78,6 +84,17 @@ export const ExperimentViewRunsControlsActions = React.memo(
           >
             <FormattedMessage
               defaultMessage="Rename"
+              description="Label for the rename run button above the experiment runs table"
+            />
+          </Button>
+          <Button
+            componentId="codegen_mlflow_app_src_experiment-tracking_components_experiment-page_components_runs_experimentviewrunscontrolsactions.tsx_110"
+            data-testid="run-analyze-button"
+            onClick={analyzeButtonClicked}
+            disabled={!canAnalyzeRuns}
+          >
+            <FormattedMessage
+              defaultMessage="radT Analyze"
               description="Label for the rename run button above the experiment runs table"
             />
           </Button>

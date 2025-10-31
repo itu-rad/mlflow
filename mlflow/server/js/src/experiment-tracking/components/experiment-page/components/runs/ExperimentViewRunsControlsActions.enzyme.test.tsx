@@ -67,7 +67,8 @@ const getActionButtons = (wrapper: ReactWrapper) => {
   const deleteButton = wrapper.find("button[data-testid='runs-delete-button']");
   const compareButton = wrapper.find("button[data-testid='runs-compare-button']");
   const renameButton = wrapper.find("button[data-testid='run-rename-button']");
-  return { deleteButton, compareButton, renameButton };
+  const analyzeButton = wrapper.find("button[data-testid='runs-analyze-button']");
+  return { deleteButton, compareButton, renameButton, analyzeButton };
 };
 
 describe('ExperimentViewRunsControlsFilters', () => {

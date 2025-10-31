@@ -89,6 +89,9 @@ export class RoutePaths {
   static get compareRuns() {
     return createMLflowRoutePath('/compare-runs');
   }
+  static get analyzeRuns() {
+    return RoutePaths.res28Page;
+  }
   static get compareExperiments() {
     return createMLflowRoutePath('/compare-experiments');
   }
@@ -253,6 +256,11 @@ class Routes {
   static getCompareRunPageRoute(runUuids: string[], experimentIds: string[]) {
     const queryString = `?runs=${JSON.stringify(runUuids)}&experiments=${JSON.stringify(experimentIds)}`;
     return `${generatePath(RoutePaths.compareRuns)}${queryString}`;
+  }
+
+  static getAnalyzeRunPageRoute(runUuids: string[]) {
+    const queryString = `/?runs=${JSON.stringify(runUuids)}`;
+    return `${generatePath(RoutePaths.analyzeRuns)}${queryString}`;
   }
 
   static get compareRunPageRoute() {
