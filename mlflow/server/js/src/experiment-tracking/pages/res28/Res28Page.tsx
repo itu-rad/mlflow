@@ -5,23 +5,60 @@ import { FormattedMessage } from 'react-intl';
 import { withErrorBoundary } from '../../../common/utils/withErrorBoundary';
 import ErrorUtils from '../../../common/utils/ErrorUtils';
 
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useCallback } from 'react';
+
 const Res28Page = () => {
   const { theme } = useDesignSystemTheme();
 
   const DEFAULT_IFRAME_SRC = `https://res28.itu.dk`;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [iframeUrl, setIframeUrl] = useState<string>("undefined");
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // keep a separate state for the iframe's src so changing the URL does not reload the iframe
+  const [iframeSrc, setIframeSrc] = useState<string>(() => {
+    // initialize iframe src once from current location.search
+    try {
+      return DEFAULT_IFRAME_SRC + (location.search || '');
+    } catch {
+      return DEFAULT_IFRAME_SRC;
+    }
+  });
+  const initializedRef = useRef(true);
 
   const handleOpenInNewTab = () => {
     const current = iframeRef.current?.src || DEFAULT_IFRAME_SRC;
     window.open(current, '_blank');
   };
 
+  const readParamsFromLocation = () => {
+    try {
+      console.log('Res28Page readParamsFromLocation:', location.search);
+      const sp = new URLSearchParams(location.search);
+      return {
+        runs: sp.get('runs') ?? '',
+        charts: sp.get('charts') ?? '',
+      };
+    } catch {
+      return { runs: '', charts: '' };
+    }
+  };
+
+  useEffect(() => {
+    const onPopState = () => {
+      const p = readParamsFromLocation();
+      // setRunsParam(p.runs);
+      // setGraphsParam(p.graphs);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // Improved message handler: accept messages regardless of evt.origin but validate the reported URL
   useEffect(() => {
     const onMessage = (evt: MessageEvent) => {
       const data = evt.data;
-      console.log('Res28Page received message:', evt, data);
       let url: string | null = null;
 
       if (!data) return;
@@ -33,16 +70,8 @@ const Res28Page = () => {
 
       if (!url) return;
 
-      try {
-        // normalize relative urls by providing BASE_ORIGIN as base
-        const parsed = new URL(url);
+      navigate(`${location.pathname}${url}`, { replace: false });
 
-        // Compose display URL as BASE_ORIGIN + /res28 + params
-        const display = `/res28${parsed.search || ''}${parsed.hash || ''}`;
-        setIframeUrl(display);
-      } catch {
-        // ignore malformed urls
-      }
     };
 
     window.addEventListener('message', onMessage);
@@ -64,25 +93,6 @@ const Res28Page = () => {
         }
       />
       <Spacer shrinks={false} />
-
-      <div
-        css={{
-          padding: '8px 12px',
-          background: theme.colors.background,
-          borderBottom: `1px solid ${theme.colors.border}`,
-          color: theme.colors.textPrimary,
-          fontSize: '13px',
-        }}
-        title={iframeUrl}
-      >
-        <strong>
-          <FormattedMessage defaultMessage="Iframe URL:" description="Label for iframe URL display" />
-        </strong>{' '}
-        <span css={{ overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '80%' }}>
-          {iframeUrl}
-        </span>
-      </div>
-
       <div css={{ 
         flex: 1, 
         display: 'flex', 
@@ -93,7 +103,7 @@ const Res28Page = () => {
       }}>
         <iframe 
           ref={iframeRef}
-          src={DEFAULT_IFRAME_SRC}
+          src={iframeSrc}//buildIframeUrl()}
           title="radT Res28"
           css={{
             border: 'none',
