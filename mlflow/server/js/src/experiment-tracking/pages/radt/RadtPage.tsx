@@ -11,7 +11,8 @@ import { useCallback } from 'react';
 const RadtPage = () => {
   const { theme } = useDesignSystemTheme();
 
-  const DEFAULT_IFRAME_SRC = (process.env['RADT_URL'] && process.env['RADT_URL'].trim()) || 'missing_radT_url';
+  const DEFAULT_IFRAME_SRC = (process.env['REACT_APP_RADT_URL'] && process.env['REACT_APP_RADT_URL'].trim()) || 'missing_radT_url';
+  console.log(`src`, DEFAULT_IFRAME_SRC, process.env);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
