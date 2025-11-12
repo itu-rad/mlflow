@@ -9,7 +9,7 @@ export enum PageId {
   home = 'mlflow.home',
   promptsPage = 'mlflow.prompts',
   promptDetailsPage = 'mlflow.prompts.details',
-  res28Page = 'mlflow.res28',
+  radtPage = 'mlflow.radt',
   experimentPageTabbed = 'mlflow.experiment.details.tab',
   experimentLoggedModelDetailsPageTab = 'mlflow.logged-model.details.tab',
   experimentLoggedModelDetailsPage = 'mlflow.logged-model.details',
@@ -90,7 +90,7 @@ export class RoutePaths {
     return createMLflowRoutePath('/compare-runs');
   }
   static get analyzeRuns() {
-    return RoutePaths.res28Page;
+    return RoutePaths.radtPage;
   }
   static get compareExperiments() {
     return createMLflowRoutePath('/compare-experiments');
@@ -105,9 +105,8 @@ export class RoutePaths {
   static get promptsPage() {
     return createMLflowRoutePath('/prompts');
   }
-  static get res28Page() {
-    // return createMLflowRoutePath('http://res28.itu.dk');
-    return createMLflowRoutePath('/res28');
+  static get radtPage() {
+    return createMLflowRoutePath('/radt');
   }
   static get promptDetailsPage() {
     return createMLflowRoutePath('/prompts/:promptName');
@@ -283,8 +282,8 @@ class Routes {
     return RoutePaths.promptsPage;
   }
 
-  static get res28PageRoute() {
-    return RoutePaths.res28Page;
+  static get radtPageRoute() {
+    return RoutePaths.radtPage;
   }
 
   static getPromptDetailsPageRoute(promptName: string) {

@@ -8,7 +8,7 @@ import ErrorUtils from '../../../common/utils/ErrorUtils';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCallback } from 'react';
 
-const Res28Page = () => {
+const RadtPage = () => {
   const { theme } = useDesignSystemTheme();
 
   const DEFAULT_IFRAME_SRC = `https://res28.itu.dk`;
@@ -57,18 +57,18 @@ const Res28Page = () => {
 
   return (
     <ScrollablePageWrapper css={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <Spacer shrinks={false} />
-      <Header
-        title={<FormattedMessage defaultMessage="radT Res28" description="Header title for the RES28 page" />}
+      {/* <Spacer shrinks={false} /> */}
+      {/* <Header
+        title={<FormattedMessage defaultMessage="radT" description="Header title for the radT page" />}
         buttons={
-          <Button componentId="mlflow.res28.openInNewTab" type="primary" onClick={handleOpenInNewTab}>
+          <Button componentId="mlflow.radt.openInNewTab" type="primary" onClick={handleOpenInNewTab}>
             <FormattedMessage
               defaultMessage="Open in new tab"
-              description="Label for button to open Res28 in a new browser tab"
+              description="Label for button to open radT in a new browser tab"
             />
           </Button>
         }
-      />
+      /> */}
       <Spacer shrinks={false} />
       <div css={{ 
         flex: 1, 
@@ -95,4 +95,4 @@ const Res28Page = () => {
   );
 };
 
-export default withErrorBoundary(ErrorUtils.mlflowServices.EXPERIMENTS, Res28Page);
+export default withErrorBoundary(ErrorUtils.mlflowServices.EXPERIMENTS, RadtPage);

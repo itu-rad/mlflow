@@ -30,7 +30,7 @@ const isExperimentsActive = (location: Location) =>
   matchPath('/experiments/*', location.pathname) || matchPath('/compare-experiments/*', location.pathname);
 const isModelsActive = (location: Location) => matchPath('/models/*', location.pathname);
 const isPromptsActive = (location: Location) => matchPath('/prompts/*', location.pathname);
-const isRes28Active = (location: Location) => matchPath('/res28/*', location.pathname);
+const isRadtActive = (location: Location) => matchPath('/radt/*', location.pathname);
 
 export function MlflowSidebar() {
   const location = useLocation();
@@ -113,20 +113,20 @@ export function MlflowSidebar() {
       },
     },
     {
-      key: 'res28',
+      key: 'radt',
       icon: <ChartLineIcon />,
       linkProps: {
-        to: ExperimentTrackingRoutes.res28PageRoute,
-        isActive: isRes28Active,
-        children: <FormattedMessage defaultMessage="radT Analyze" description="Sidebar link for res28 tab" />,
+        to: ExperimentTrackingRoutes.radtPageRoute,
+        isActive: isRadtActive,
+        children: <FormattedMessage defaultMessage="radT Analyze" description="Sidebar link for radT tab" />,
       },
       dropdownProps: {
         componentId: 'mlflow_sidebar.create_model_button',
-        onClick: () => { const newWindow = window.open("http://res28.itu.dk", '_blank'); newWindow?.focus(); },
+        onClick: () =>  {},
         children: (
           <FormattedMessage
-            defaultMessage="Res28"
-            description="Sidebar button inside the 'new' popover for opening res28"
+            defaultMessage="radT"
+            description="Sidebar button inside the 'new' popover for opening radT"
           />
         ),
       },
