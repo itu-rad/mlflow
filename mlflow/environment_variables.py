@@ -1170,6 +1170,13 @@ MLFLOW_SERVER_X_FRAME_OPTIONS = _EnvironmentVariable(
     "MLFLOW_SERVER_X_FRAME_OPTIONS", str, "SAMEORIGIN"
 )
 
+#: Base URL of the radT instance embedded in the UI's radT Analyze page.
+#: The browser loads this URL in an iframe, so it must resolve from the user's
+#: machine -- an in-cluster hostname that only the server can reach will not work.
+#: When unset, the radT page renders a configuration message instead of an iframe.
+#: (default: ``None``)
+MLFLOW_RADT_URL = _EnvironmentVariable("MLFLOW_RADT_URL", str, None)
+
 #: Specifies the max length (in chars) of an experiment's artifact location.
 #: The default is 2048.
 MLFLOW_ARTIFACT_LOCATION_MAX_LENGTH = _EnvironmentVariable(

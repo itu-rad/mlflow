@@ -79,6 +79,7 @@ from mlflow.environment_variables import (
     MLFLOW_DEPLOYMENTS_TARGET,
     MLFLOW_ENABLE_WORKSPACES,
     MLFLOW_PRESIGNED_DOWNLOAD_URL_TTL_SECONDS,
+    MLFLOW_RADT_URL,
 )
 from mlflow.exceptions import (
     MlflowException,
@@ -7581,6 +7582,19 @@ def _get_or_fetch_ui_telemetry_config():
         config = fetch_ui_telemetry_config()
         _telemetry_config_cache["config"] = config
     return config
+
+
+@catch_mlflow_exception
+def get_radt_config_handler():
+    """
+    GET handler for the radT config endpoint.
+
+    Resolves ``MLFLOW_RADT_URL`` per request rather than at import time so the
+    UI bundle stays deployment-agnostic and the same wheel can be pointed at
+    any radT instance.
+    """
+    radt_url = (MLFLOW_RADT_URL.get() or "").strip()
+    return jsonify({"radt_url": radt_url or None})
 
 
 @catch_mlflow_exception

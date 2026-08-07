@@ -432,6 +432,55 @@ def test_version():
         assert response.get_data().decode() == mlflow.__version__
 
 
+def test_radt_config_returns_configured_url(monkeypatch):
+    monkeypatch.setenv("MLFLOW_RADT_URL", "http://radt.example.com:8501")
+    with app.test_client() as c:
+        response = c.get("/ajax-api/2.0/mlflow/radt-config")
+        assert response.status_code == 200
+        assert response.get_json() == {"radt_url": "http://radt.example.com:8501"}
+
+
+def test_radt_config_returns_null_when_unset(monkeypatch):
+    monkeypatch.delenv("MLFLOW_RADT_URL", raising=False)
+    with app.test_client() as c:
+        response = c.get("/ajax-api/2.0/mlflow/radt-config")
+        assert response.status_code == 200
+        assert response.get_json() == {"radt_url": None}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("  http://radt:8501  ", "http://radt:8501"),
+        # A blank value is indistinguishable from unset, so the UI shows its
+        # "not configured" state rather than pointing an iframe at "".
+        ("   ", None),
+        ("", None),
+    ],
+)
+def test_radt_config_normalizes_blank_values(monkeypatch, value, expected):
+    monkeypatch.setenv("MLFLOW_RADT_URL", value)
+    with app.test_client() as c:
+        response = c.get("/ajax-api/2.0/mlflow/radt-config")
+        assert response.status_code == 200
+        assert response.get_json() == {"radt_url": expected}
+
+
+# Reading the env var at import time would freeze the URL into the process, defeating
+# the point of shipping one wheel that can be repointed at any radT instance.
+def test_radt_config_is_read_per_request(monkeypatch):
+    with app.test_client() as c:
+        monkeypatch.setenv("MLFLOW_RADT_URL", "http://first:8501")
+        assert (
+            c.get("/ajax-api/2.0/mlflow/radt-config").get_json()["radt_url"] == "http://first:8501"
+        )
+
+        monkeypatch.setenv("MLFLOW_RADT_URL", "http://second:8501")
+        assert (
+            c.get("/ajax-api/2.0/mlflow/radt-config").get_json()["radt_url"] == "http://second:8501"
+        )
+
+
 def test_server_info():
     with app.test_client() as c:
         response = c.get("/api/3.0/mlflow/server-info")

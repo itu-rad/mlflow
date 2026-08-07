@@ -5203,6 +5203,10 @@
     "defaultMessage": "Move to top",
     "description": "Experiment page > compare runs tab > chart header > move to top option"
   },
+  "Ld6A1X": {
+    "defaultMessage": "radT is not configured",
+    "description": "Title shown on the radT page when the server has no radT URL configured"
+  },
   "LfggX9": {
     "defaultMessage": "Loading users…",
     "description": "Review queue: owner roster loading"
@@ -5802,6 +5806,10 @@
   "O4KXrW": {
     "defaultMessage": "Enter the retention",
     "description": "Placeholder for trace archival retention amount input"
+  },
+  "O8RoPA": {
+    "defaultMessage": "Set the MLFLOW_RADT_URL environment variable on the MLflow server to the address of your radT instance, then reload this page. The address must be reachable from your browser.",
+    "description": "Guidance shown on the radT page when the server has no radT URL configured"
   },
   "O92ET5": {
     "defaultMessage": "Repository:",

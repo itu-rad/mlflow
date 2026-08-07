@@ -48,6 +48,7 @@ from mlflow.server.handlers import (
     get_metric_history_bulk_handler,
     get_metric_history_bulk_interval_handler,
     get_model_version_artifact_handler,
+    get_radt_config_handler,
     get_trace_artifact_handler,
     get_ui_telemetry_handler,
     post_ui_telemetry_handler,
@@ -169,6 +170,11 @@ def serve_get_trace_artifact():
 )
 def serve_get_logged_model_artifact(model_id: str):
     return get_logged_model_artifact_handler(model_id)
+
+
+@app.route(_add_static_prefix("/ajax-api/2.0/mlflow/radt-config"), methods=["GET"])
+def serve_get_radt_config():
+    return get_radt_config_handler()
 
 
 @app.route(_add_static_prefix("/ajax-api/3.0/mlflow/ui-telemetry"), methods=["GET"])

@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ScrollablePageWrapper } from '@mlflow/mlflow/src/common/components/ScrollablePageWrapper';
-import { Spacer, useDesignSystemTheme } from '@databricks/design-system';
+import { Empty, Spacer, Spinner, useDesignSystemTheme } from '@databricks/design-system';
+import { FormattedMessage } from 'react-intl';
+import { useQuery } from '@mlflow/mlflow/src/common/utils/reactQueryHooks';
+import { fetchAPI, getAjaxUrl } from '../../../common/utils/FetchUtils';
 import { useLocation, useNavigate } from '../../../common/utils/RoutingUtils';
 import { withErrorBoundary } from '../../../common/utils/withErrorBoundary';
 import ErrorUtils from '../../../common/utils/ErrorUtils';
 
-// Baked in at build time by craco/webpack, so the deployed image cannot change
-// it without a rebuild.
-const RADT_URL = process.env['REACT_APP_RADT_URL']?.trim() || 'missing_radT_url';
+interface RadtConfigResponse {
+  radt_url: string | null;
+}
 
 /**
  * Only same-document suffixes are forwarded into our own pathname. Rejecting
@@ -16,15 +19,42 @@ const RADT_URL = process.env['REACT_APP_RADT_URL']?.trim() || 'missing_radT_url'
  */
 const isSameDocumentSuffix = (url: string) => /^[?#]/.test(url);
 
+const centeredEmptyStyles = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: '100%',
+  minHeight: 400,
+  width: '100%',
+  '& > div': {
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+} as const;
+
 const RadtPage = () => {
   const { theme } = useDesignSystemTheme();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Held in state rather than derived from `location`: radT drives the URL via
-  // postMessage, and feeding those updates back into `src` would reload the
-  // iframe and discard the state radT just reported.
-  const [iframeSrc] = useState(() => `${RADT_URL}${location.search}`);
+  // Resolved from the server rather than baked into the bundle, so one wheel can
+  // be pointed at any radT instance.
+  const { data, isLoading } = useQuery({
+    queryKey: ['radt-config'],
+    queryFn: () => fetchAPI(getAjaxUrl('ajax-api/2.0/mlflow/radt-config')) as Promise<RadtConfigResponse>,
+    staleTime: Infinity,
+  });
+
+  const radtUrl = data?.radt_url;
+
+  // Pinned to the search string we mounted with: radT drives the URL via
+  // postMessage afterwards, and rebuilding `src` from the live location would
+  // reload the iframe and discard the state radT just reported.
+  const initialSearch = useRef(location.search);
+  const iframeSrc = useMemo(() => (radtUrl ? `${radtUrl}${initialSearch.current}` : null), [radtUrl]);
 
   const pathnameRef = useRef(location.pathname);
   pathnameRef.current = location.pathname;
@@ -45,6 +75,51 @@ const RadtPage = () => {
     return () => window.removeEventListener('message', onMessage);
   }, [navigate]);
 
+  const renderBody = () => {
+    if (isLoading) {
+      return (
+        <div css={centeredEmptyStyles}>
+          <Spinner />
+        </div>
+      );
+    }
+
+    if (!iframeSrc) {
+      return (
+        <div css={centeredEmptyStyles}>
+          <Empty
+            title={
+              <FormattedMessage
+                defaultMessage="radT is not configured"
+                description="Title shown on the radT page when the server has no radT URL configured"
+              />
+            }
+            description={
+              <FormattedMessage
+                defaultMessage="Set the MLFLOW_RADT_URL environment variable on the MLflow server to the address of your radT instance, then reload this page. The address must be reachable from your browser."
+                description="Guidance shown on the radT page when the server has no radT URL configured"
+              />
+            }
+          />
+        </div>
+      );
+    }
+
+    return (
+      <iframe
+        src={iframeSrc}
+        title="radT Analyze"
+        css={{
+          border: 'none',
+          width: '100%',
+          height: '100%',
+          flexGrow: 1,
+        }}
+        sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+      />
+    );
+  };
+
   return (
     <ScrollablePageWrapper css={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <Spacer shrinks={false} />
@@ -58,17 +133,7 @@ const RadtPage = () => {
           borderRadius: theme.general.borderRadiusBase,
         }}
       >
-        <iframe
-          src={iframeSrc}
-          title="radT Analyze"
-          css={{
-            border: 'none',
-            width: '100%',
-            height: '100%',
-            flexGrow: 1,
-          }}
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-        />
+        {renderBody()}
       </div>
     </ScrollablePageWrapper>
   );
