@@ -34,7 +34,6 @@
   "mlflow.paddle": "api_reference/python_api/mlflow.paddle.html",
   "mlflow.pmdarima": "api_reference/python_api/mlflow.pmdarima.html",
   "mlflow.projects": "api_reference/python_api/mlflow.projects.html",
-  "mlflow.promptflow": "api_reference/python_api/mlflow.promptflow.html",
   "mlflow.prophet": "api_reference/python_api/mlflow.prophet.html",
   "mlflow.pydantic_ai": "api_reference/python_api/mlflow.pydantic_ai.html",
   "mlflow.pyfunc": "api_reference/python_api/mlflow.pyfunc.html",
@@ -65,5 +64,6 @@
   "mlflow.python": "api_reference/python_api/index.html",
   "mlflow.rest": "api_reference/rest-api.html",
   "mlflow.typescript": "api_reference/typescript_api/index.html",
-  "mlflow.llms.deployments.api": "api_reference/llms/deployments/api.html"
+  "mlflow.llms.deployments.api": "api_reference/llms/deployments/api.html",
+  "mlflow.genai.mcp_server_registry.api": "api_reference/genai/mcp-server-registry/api.html"
 }

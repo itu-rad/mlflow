@@ -4,9 +4,11 @@ import {
   Span as OTelSpan,
   SpanProcessor,
   ReadableSpan as OTelReadableSpan,
-  SpanExporter
+  SpanExporter,
 } from '@opentelemetry/sdk-trace-base';
 import { Context } from '@opentelemetry/api';
+import { createAndRegisterMlflowSpan } from '../core/api';
+import { getConfiguredTraceMetadata, getConfiguredTraceTags } from '../core/context';
 import { InMemoryTraceManager } from '../core/trace_manager';
 import { TraceInfo } from '../core/entities/trace_info';
 import { createTraceLocationFromExperimentId } from '../core/entities/trace_location';
@@ -15,15 +17,12 @@ import {
   SpanAttributeKey,
   TRACE_ID_PREFIX,
   TRACE_SCHEMA_VERSION,
-  TraceMetadataKey
+  TraceMetadataKey,
 } from '../core/constants';
-import {
-  convertHrTimeToMs,
-  deduplicateSpanNamesInPlace,
-  aggregateUsageFromSpans
-} from '../core/utils';
+import { convertHrTimeToMs, aggregateUsageFromSpans } from '../core/utils';
 import { getConfig } from '../core/config';
 import { MlflowClient } from '../clients';
+import { executeOnSpanEndHooks, executeOnSpanStartHooks } from './span_processor_hooks';
 
 /**
  * Generate a MLflow-compatible trace ID for the given span.
@@ -55,17 +54,32 @@ export class MlflowSpanProcessor implements SpanProcessor {
     if (!span.parentSpanContext?.spanId) {
       // This is a root span
       traceId = generateTraceId(span);
+
+      // Build trace metadata, merging context-injected values
+      const traceMetadata: Record<string, string> = {
+        [TraceMetadataKey.SCHEMA_VERSION]: TRACE_SCHEMA_VERSION,
+      };
+      const ctxMetadata = getConfiguredTraceMetadata();
+      if (ctxMetadata) {
+        Object.assign(traceMetadata, ctxMetadata);
+      }
+
+      // Build trace tags, merging context-injected values
+      const tags: Record<string, string> = {};
+      const ctxTags = getConfiguredTraceTags();
+      if (ctxTags) {
+        Object.assign(tags, ctxTags);
+      }
+
       const trace_info = new TraceInfo({
         traceId: traceId,
         traceLocation: createTraceLocationFromExperimentId(experimentId),
         requestTime: convertHrTimeToMs(span.startTime),
         executionDuration: 0,
         state: TraceState.IN_PROGRESS,
-        traceMetadata: {
-          [TraceMetadataKey.SCHEMA_VERSION]: TRACE_SCHEMA_VERSION
-        },
-        tags: {},
-        assessments: []
+        traceMetadata,
+        tags,
+        assessments: [],
       });
       InMemoryTraceManager.getInstance().registerTrace(otelTraceId, trace_info);
     } else {
@@ -79,6 +93,9 @@ export class MlflowSpanProcessor implements SpanProcessor {
 
     // Set trace ID to the span
     span.setAttribute(SpanAttributeKey.TRACE_ID, JSON.stringify(traceId));
+
+    createAndRegisterMlflowSpan(span);
+    executeOnSpanStartHooks(span);
   }
 
   /**
@@ -87,14 +104,17 @@ export class MlflowSpanProcessor implements SpanProcessor {
    * @param span the Span that just ended.
    */
   onEnd(span: OTelReadableSpan): void {
+    const traceManager = InMemoryTraceManager.getInstance();
+
+    executeOnSpanEndHooks(span);
+
     // Only trigger trace export for root span completion
     if (span.parentSpanContext?.spanId) {
       return;
     }
 
     // Update trace info
-    const otelTraceId = span.spanContext().traceId;
-    const traceId = InMemoryTraceManager.getInstance().getMlflowTraceIdFromOtelId(otelTraceId);
+    const traceId = traceManager.getMlflowTraceIdFromOtelId(span.spanContext().traceId);
     if (!traceId) {
       console.warn(`No trace ID found for span ${span.name}. Skipping.`);
       return;
@@ -107,8 +127,6 @@ export class MlflowSpanProcessor implements SpanProcessor {
     }
 
     this.updateTraceInfo(trace.info, span);
-    deduplicateSpanNamesInPlace(Array.from(trace.spanDict.values()));
-
     // Aggregate token usage from all spans and add to trace metadata
     const allSpans = Array.from(trace.spanDict.values());
     const aggregatedUsage = aggregateUsageFromSpans(allSpans);
@@ -126,7 +144,16 @@ export class MlflowSpanProcessor implements SpanProcessor {
    */
   updateTraceInfo(traceInfo: TraceInfo, span: OTelReadableSpan): void {
     traceInfo.executionDuration = convertHrTimeToMs(span.endTime) - traceInfo.requestTime;
-    traceInfo.state = fromOtelStatus(span.status.code);
+
+    let state = fromOtelStatus(span.status.code);
+    // NB: In OpenTelemetry, status code remains UNSET if not explicitly set
+    // by the user. However, there is no way to set the status when using
+    // `trace` function wrapper. Therefore, we just automatically set the status
+    // to OK if it is not ERROR.
+    if (state === TraceState.STATE_UNSPECIFIED) {
+      state = TraceState.OK;
+    }
+    traceInfo.state = state;
   }
 
   /**
@@ -161,11 +188,15 @@ export class MlflowSpanExporter implements SpanExporter {
         continue;
       }
 
-      const trace = InMemoryTraceManager.getInstance().popTrace(span.spanContext().traceId);
+      const traceManager = InMemoryTraceManager.getInstance();
+      const trace = traceManager.popTrace(span.spanContext().traceId);
       if (!trace) {
         console.warn(`No trace found for span ${span.name}. Skipping.`);
         continue;
       }
+
+      // Set the last active trace ID
+      traceManager.lastActiveTraceId = trace.info.traceId;
 
       // Export trace to backend and track the promise
       const exportPromise = this.exportTraceToBackend(trace).catch((error) => {

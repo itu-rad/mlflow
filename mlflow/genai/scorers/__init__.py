@@ -1,7 +1,11 @@
 from typing import TYPE_CHECKING
 
-from mlflow.genai.scorers.base import Scorer, ScorerSamplingConfig, scorer
+from mlflow.genai.scorers.base import Scorer, ScorerSamplingConfig, make_scorer_ensemble, scorer
+from mlflow.genai.scorers.ensemble import agg_all, agg_any, majority_vote, maximum, mean, minimum
 from mlflow.genai.scorers.registry import delete_scorer, get_scorer, list_scorers
+
+# Metadata keys for scorer feedback
+FRAMEWORK_METADATA_KEY = "mlflow.scorer.framework"
 
 # NB: We use lazy imports for builtin_scorers to avoid a circular dependency issue.
 #
@@ -24,15 +28,30 @@ from mlflow.genai.scorers.registry import delete_scorer, get_scorer, list_scorer
 
 # Define the attributes that should be lazily loaded
 _LAZY_IMPORTS = {
+    "Completeness",
+    "ConversationalGuidelines",
+    "ConversationalRoleAdherence",
+    "ConversationalSafety",
+    "ConversationCompleteness",
+    "ConversationalToolCallEfficiency",
     "Correctness",
     "ExpectationsGuidelines",
+    "Fluency",
     "Guidelines",
     "Equivalence",
+    "KnowledgeRetention",
+    "PIIDetection",
+    "RegexMatch",
     "RelevanceToQuery",
+    "ResponseLength",
     "RetrievalGroundedness",
     "RetrievalRelevance",
     "RetrievalSufficiency",
     "Safety",
+    "Summarization",
+    "ToolCallCorrectness",
+    "ToolCallEfficiency",
+    "UserFrustration",
     "get_all_scorers",
 }
 
@@ -65,31 +84,68 @@ def __dir__():
 # This gives us the best of both worlds: type hints without circular imports.
 if TYPE_CHECKING:
     from mlflow.genai.scorers.builtin_scorers import (
+        Completeness,
+        ConversationalGuidelines,
+        ConversationalRoleAdherence,
+        ConversationalSafety,
+        ConversationalToolCallEfficiency,
+        ConversationCompleteness,
         Correctness,
         Equivalence,
         ExpectationsGuidelines,
+        Fluency,
         Guidelines,
+        KnowledgeRetention,
+        PIIDetection,
+        RegexMatch,
         RelevanceToQuery,
+        ResponseLength,
         RetrievalGroundedness,
         RetrievalRelevance,
         RetrievalSufficiency,
         Safety,
+        Summarization,
+        ToolCallCorrectness,
+        ToolCallEfficiency,
+        UserFrustration,
         get_all_scorers,
     )
 
 __all__ = [
+    "Completeness",
+    "ConversationalGuidelines",
+    "ConversationalRoleAdherence",
+    "ConversationalSafety",
+    "ConversationalToolCallEfficiency",
+    "ConversationCompleteness",
     "Correctness",
     "ExpectationsGuidelines",
+    "Fluency",
     "Guidelines",
     "Equivalence",
+    "KnowledgeRetention",
+    "PIIDetection",
+    "RegexMatch",
     "RelevanceToQuery",
+    "ResponseLength",
     "RetrievalGroundedness",
     "RetrievalRelevance",
     "RetrievalSufficiency",
     "Safety",
+    "Summarization",
+    "ToolCallCorrectness",
+    "ToolCallEfficiency",
+    "UserFrustration",
     "Scorer",
     "scorer",
+    "make_scorer_ensemble",
     "ScorerSamplingConfig",
+    "agg_all",
+    "agg_any",
+    "majority_vote",
+    "maximum",
+    "mean",
+    "minimum",
     "get_all_scorers",
     "get_scorer",
     "list_scorers",

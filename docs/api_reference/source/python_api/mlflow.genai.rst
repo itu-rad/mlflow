@@ -12,6 +12,36 @@ mlflow.genai
     :show-inheritance:
     :exclude-members: Scorer
 
+.. automodule:: mlflow.genai.scorers.deepeval
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :exclude-members: DeepEvalScorer
+
+.. automodule:: mlflow.genai.scorers.ragas
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :exclude-members: RagasScorer
+
+.. automodule:: mlflow.genai.scorers.phoenix
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :exclude-members: PhoenixScorer
+
+.. automodule:: mlflow.genai.scorers.trulens
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :exclude-members: TruLensScorer, TruLensAgentScorer
+
+.. automodule:: mlflow.genai.scorers.guardrails
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :exclude-members: GuardrailsScorer
+
 .. automodule:: mlflow.genai.datasets
     :members:
     :undoc-members:
@@ -22,12 +52,22 @@ mlflow.genai
     :undoc-members:
     :show-inheritance:
 
+.. automodule:: mlflow.genai.review_queues
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. automodule:: mlflow.genai.optimize
     :members:
     :undoc-members:
     :show-inheritance:
 
 .. automodule:: mlflow.genai.judges
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: mlflow.genai.agent_server
     :members:
     :undoc-members:
     :show-inheritance:

@@ -9,7 +9,6 @@ from unittest import mock
 import pandas as pd
 import pydantic
 import pytest
-from packaging.version import Version
 from pyspark.sql import SparkSession
 from pyspark.sql.types import (
     ArrayType,
@@ -34,15 +33,27 @@ from mlflow.types.agent import ChatAgentMessage, ChatAgentResponse, ChatContext
 from mlflow.types.llm import ChatMessage, ChatParams
 from mlflow.types.schema import AnyType, Array, ColSpec, DataType, Map, Object, Property, Schema
 from mlflow.types.type_hints import TypeFromExample
-from mlflow.utils.pydantic_utils import model_dump_compat
 
-from tests.helper_functions import pyfunc_serve_and_score_model
+from tests.pyfunc.utils import score_model_in_process
 
 
 @pytest.fixture(scope="module")
 def spark():
     with SparkSession.builder.master("local[*]").getOrCreate() as s:
         yield s
+
+
+@pytest.fixture(autouse=True, scope="module")
+def mock_log_model_with_pip_requirements():
+    """Inject pip_requirements=[] to skip dependency inference in all log_model calls."""
+    original_log_model = mlflow.pyfunc.log_model
+
+    def patched_log_model(*args, **kwargs):
+        kwargs.setdefault("pip_requirements", [])
+        return original_log_model(*args, **kwargs)
+
+    with mock.patch("mlflow.pyfunc.log_model", patched_log_model):
+        yield
 
 
 class CustomExample(pydantic.BaseModel):
@@ -126,25 +137,19 @@ class CustomExample2(pydantic.BaseModel):
         # Pydantic Models
         (
             list[CustomExample],
-            Schema(
-                [
-                    ColSpec(
-                        type=Object(
-                            [
-                                Property(name="long_field", dtype=DataType.long),
-                                Property(name="str_field", dtype=DataType.string),
-                                Property(name="bool_field", dtype=DataType.boolean),
-                                Property(name="double_field", dtype=DataType.double),
-                                Property(name="any_field", dtype=AnyType()),
-                                Property(
-                                    name="optional_str", dtype=DataType.string, required=False
-                                ),
-                                Property(name="str_or_none", dtype=DataType.string, required=False),
-                            ]
-                        )
-                    ),
-                ]
-            ),
+            Schema([
+                ColSpec(
+                    type=Object([
+                        Property(name="long_field", dtype=DataType.long),
+                        Property(name="str_field", dtype=DataType.string),
+                        Property(name="bool_field", dtype=DataType.boolean),
+                        Property(name="double_field", dtype=DataType.double),
+                        Property(name="any_field", dtype=AnyType()),
+                        Property(name="optional_str", dtype=DataType.string, required=False),
+                        Property(name="str_or_none", dtype=DataType.string, required=False),
+                    ])
+                ),
+            ]),
             [
                 {
                     "long_field": 123,
@@ -159,30 +164,24 @@ class CustomExample2(pydantic.BaseModel):
         ),
         (
             list[CustomExample2],
-            Schema(
-                [
-                    ColSpec(
-                        type=Object(
-                            [
-                                Property(name="custom_field", dtype=Map(AnyType())),
-                                Property(
-                                    name="messages",
-                                    dtype=Array(
-                                        Object(
-                                            [
-                                                Property(name="role", dtype=DataType.string),
-                                                Property(name="content", dtype=DataType.string),
-                                            ]
-                                        )
-                                    ),
-                                ),
-                                Property(name="optional_int", dtype=DataType.long, required=False),
-                                Property(name="int_or_none", dtype=DataType.long, required=False),
-                            ]
-                        )
-                    )
-                ]
-            ),
+            Schema([
+                ColSpec(
+                    type=Object([
+                        Property(name="custom_field", dtype=Map(AnyType())),
+                        Property(
+                            name="messages",
+                            dtype=Array(
+                                Object([
+                                    Property(name="role", dtype=DataType.string),
+                                    Property(name="content", dtype=DataType.string),
+                                ])
+                            ),
+                        ),
+                        Property(name="optional_int", dtype=DataType.long, required=False),
+                        Property(name="int_or_none", dtype=DataType.long, required=False),
+                    ])
+                )
+            ]),
             [
                 {
                     "custom_field": {"a": 1},
@@ -244,16 +243,15 @@ def test_pyfunc_model_infer_signature_from_type_hints(
     pyfunc_model = mlflow.pyfunc.load_model(model_info.model_uri)
     result = pyfunc_model.predict(input_example)
     if isinstance(result[0], pydantic.BaseModel):
-        result = [model_dump_compat(r) for r in result]
+        result = [r.model_dump() for r in result]
     assert result == input_example
 
     # test serving
     payload = convert_input_example_to_serving_input(input_example)
-    scoring_response = pyfunc_serve_and_score_model(
+    scoring_response = score_model_in_process(
         model_uri=model_info.model_uri,
         data=payload,
         content_type=CONTENT_TYPE_JSON,
-        extra_args=["--env-manager", "local"],
     )
     assert scoring_response.status_code == 200
 
@@ -294,24 +292,20 @@ class CustomExample3(pydantic.BaseModel):
         # Pydantic Models
         (
             list[CustomExample3],
-            StructType(
-                [
-                    StructField("custom_field", MapType(StringType(), ArrayType(StringType()))),
-                    StructField(
-                        "messages",
-                        ArrayType(
-                            StructType(
-                                [
-                                    StructField("role", StringType(), False),
-                                    StructField("content", StringType(), False),
-                                ]
-                            )
-                        ),
+            StructType([
+                StructField("custom_field", MapType(StringType(), ArrayType(StringType()))),
+                StructField(
+                    "messages",
+                    ArrayType(
+                        StructType([
+                            StructField("role", StringType(), False),
+                            StructField("content", StringType(), False),
+                        ])
                     ),
-                    StructField("optional_int", IntegerType()),
-                    StructField("int_or_none", IntegerType()),
-                ]
-            ),
+                ),
+                StructField("optional_int", IntegerType()),
+                StructField("int_or_none", IntegerType()),
+            ]),
             [
                 {
                     "custom_field": {"a": ["a", "b", "c"]},
@@ -508,7 +502,6 @@ class Message(pydantic.BaseModel):
     role: str
     content: str
 
-
 class CustomExample2(pydantic.BaseModel):
     custom_field: dict[str, Any]
     messages: list[Message]
@@ -627,9 +620,10 @@ def test_callable_local_testing():
         return {m.role: m.content for m in messages}
 
     assert predict([Message(role="admin", content="hello")]) == {"admin": "hello"}
-    assert predict(
-        [{"role": "admin", "content": "hello"}, {"role": "user", "content": "hello"}]
-    ) == {"admin": "hello", "user": "hello"}
+    assert predict([
+        {"role": "admin", "content": "hello"},
+        {"role": "user", "content": "hello"},
+    ]) == {"admin": "hello", "user": "hello"}
     pdf = pd.DataFrame([[{"role": "admin", "content": "hello"}]])
     assert predict(pdf) == {"admin": "hello"}
 
@@ -641,9 +635,10 @@ def test_callable_local_testing():
         )
     pyfunc_model = mlflow.pyfunc.load_model(model_info.model_uri)
     assert pyfunc_model.predict([Message(role="admin", content="hello")]) == {"admin": "hello"}
-    assert pyfunc_model.predict(
-        [{"role": "admin", "content": "hello"}, {"role": "user", "content": "hello"}]
-    ) == {"admin": "hello", "user": "hello"}
+    assert pyfunc_model.predict([
+        {"role": "admin", "content": "hello"},
+        {"role": "user", "content": "hello"},
+    ]) == {"admin": "hello", "user": "hello"}
     assert pyfunc_model.predict(pdf) == {"admin": "hello"}
 
     # without decorator
@@ -698,9 +693,10 @@ def test_python_model_local_testing_data_validation():
 
     model = Model()
     assert model.predict([Message(role="admin", content="hello")]) == {"admin": "hello"}
-    assert model.predict(
-        [{"role": "admin", "content": "hello"}, {"role": "user", "content": "hello"}]
-    ) == {"admin": "hello", "user": "hello"}
+    assert model.predict([
+        {"role": "admin", "content": "hello"},
+        {"role": "user", "content": "hello"},
+    ]) == {"admin": "hello", "user": "hello"}
     pdf = pd.DataFrame([[{"role": "admin", "content": "hello"}]])
     assert model.predict(pdf) == {"admin": "hello"}
 
@@ -710,9 +706,10 @@ def test_python_model_local_testing_data_validation():
         )
     pyfunc_model = mlflow.pyfunc.load_model(model_info.model_uri)
     assert pyfunc_model.predict([Message(role="admin", content="hello")]) == {"admin": "hello"}
-    assert pyfunc_model.predict(
-        [{"role": "admin", "content": "hello"}, {"role": "user", "content": "hello"}]
-    ) == {"admin": "hello", "user": "hello"}
+    assert pyfunc_model.predict([
+        {"role": "admin", "content": "hello"},
+        {"role": "user", "content": "hello"},
+    ]) == {"admin": "hello", "user": "hello"}
     assert pyfunc_model.predict(pdf) == {"admin": "hello"}
 
 
@@ -998,11 +995,10 @@ def test_type_hint_from_example(input_example, type_from_example_model):
 
     # test serving
     payload = convert_input_example_to_serving_input(input_example)
-    scoring_response = pyfunc_serve_and_score_model(
+    scoring_response = score_model_in_process(
         model_uri=model_info.model_uri,
         data=payload,
         content_type=CONTENT_TYPE_JSON,
-        extra_args=["--env-manager", "local"],
     )
     assert scoring_response.status_code == 200
     if isinstance(input_example, pd.DataFrame):
@@ -1028,10 +1024,6 @@ def test_type_hint_from_example_invalid_input(type_from_example_model):
         pyfunc_model.predict(["1", "2", "3"])
 
 
-@pytest.mark.skipif(
-    Version(pydantic.VERSION).major <= 1,
-    reason="pydantic v1 has default value None if the field is Optional",
-)
 def test_invalid_type_hint_raise_exception():
     class Message(pydantic.BaseModel):
         role: str
@@ -1114,15 +1106,13 @@ def test_type_hint_warning_not_shown_for_builtin_subclasses():
         # Note: DO NOT USE importlib.reload as classes in the reloaded
         # module are different than original ones, which could cause unintended
         # side effects in other tests.
-        subprocess.check_call(
-            [
-                sys.executable,
-                "-W",
-                "error::UserWarning:mlflow.pyfunc.model",
-                "-c",
-                "import mlflow.pyfunc.model",
-            ]
-        )
+        subprocess.check_call([
+            sys.executable,
+            "-W",
+            "error::UserWarning:mlflow.pyfunc.model",
+            "-c",
+            "import mlflow.pyfunc.model",
+        ])
 
 
 def test_load_context_type_hint():

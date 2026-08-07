@@ -55,8 +55,13 @@ def _parse_abfss_uri(uri):
     account_name = match.group(2)
     domain_suffix = match.group(3)
     path = parsed.path
-    if path.startswith("/"):
-        path = path[1:]
+    path = path.removeprefix("/")
+    # Decode percent-encoded characters so the Azure SDK re-quotes exactly once.
+    # Without this, an encoded %20 becomes %2520 on the wire and any SAS signature
+    # minted over the decoded path fails validation with AuthenticationFailed.
+    # lstrip("/") strips any leading slash re-introduced by decoding "%2F", so
+    # downstream ADLS calls always receive a relative path.
+    path = urllib.parse.unquote(path).lstrip("/")
     return filesystem, account_name, domain_suffix, path
 
 
@@ -153,8 +158,7 @@ class AzureDataLakeArtifactRepository(CloudArtifactRepository):
                 continue
             if result.is_directory:
                 subdir = posixpath.relpath(path=result.name, start=self.base_data_lake_directory)
-                if subdir.endswith("/"):
-                    subdir = subdir[:-1]
+                subdir = subdir.removesuffix("/")
                 infos.append(FileInfo(subdir, is_dir=True, file_size=None))
             else:
                 file_name = posixpath.relpath(path=result.name, start=self.base_data_lake_directory)

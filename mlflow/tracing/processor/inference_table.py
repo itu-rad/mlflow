@@ -6,6 +6,7 @@ from opentelemetry.sdk.trace import ReadableSpan as OTelReadableSpan
 from opentelemetry.sdk.trace import Span as OTelSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 
+from mlflow.entities.span import create_mlflow_span
 from mlflow.entities.trace_info import TraceInfo
 from mlflow.entities.trace_location import TraceLocation
 from mlflow.entities.trace_state import TraceState
@@ -19,12 +20,13 @@ from mlflow.tracing.constant import (
 from mlflow.tracing.trace_manager import InMemoryTraceManager
 from mlflow.tracing.utils import (
     _try_get_prediction_context,
+    aggregate_cost_from_spans,
     aggregate_usage_from_spans,
-    deduplicate_span_names_in_place,
     generate_trace_id_v3,
     get_otel_attribute,
     maybe_get_dependencies_schemas,
     maybe_get_request_id,
+    should_compute_cost_client_side,
     update_trace_state_from_span_conditionally,
 )
 from mlflow.utils.mlflow_tags import MLFLOW_DATABRICKS_MODEL_SERVING_ENDPOINT_NAME
@@ -51,7 +53,7 @@ class InferenceTableSpanProcessor(SimpleSpanProcessor):
     """
 
     def __init__(self, span_exporter: SpanExporter):
-        self.span_exporter = span_exporter
+        super().__init__(span_exporter)
         self._trace_manager = InMemoryTraceManager.get_instance()
 
     def on_start(self, span: OTelSpan, parent_context: Context | None = None):
@@ -111,6 +113,8 @@ class InferenceTableSpanProcessor(SimpleSpanProcessor):
             )
             self._trace_manager.register_trace(span.context.trace_id, trace_info)
 
+        self._trace_manager.register_span(create_mlflow_span(span, trace_id))
+
     def on_end(self, span: OTelReadableSpan) -> None:
         """
         Handle the end of a span. This method is called when an OpenTelemetry span is ended.
@@ -135,11 +139,22 @@ class InferenceTableSpanProcessor(SimpleSpanProcessor):
             update_trace_state_from_span_conditionally(trace, span)
 
             spans = list(trace.span_dict.values())
-            deduplicate_span_names_in_place(spans)
 
-            # Aggregate token usage information from all spans
-            if usage := aggregate_usage_from_spans(spans):
-                trace.info.request_metadata[TraceMetadataKey.TOKEN_USAGE] = json.dumps(usage)
+            # Aggregate token usage and cost as best-effort: this metadata is optional, and
+            # a failure here must never abort root-span export / trace finalization (#24344).
+            try:
+                if usage := aggregate_usage_from_spans(spans):
+                    trace.info.request_metadata[TraceMetadataKey.TOKEN_USAGE] = json.dumps(usage)
+
+                if should_compute_cost_client_side() and (cost := aggregate_cost_from_spans(spans)):
+                    trace.info.request_metadata[TraceMetadataKey.COST] = json.dumps(cost)
+            except Exception as e:
+                _logger.warning(
+                    f"Failed to aggregate token usage/cost for trace {trace_id}: {e}. "
+                    "Continuing finalization without it. For full traceback, set logging "
+                    "level to debug.",
+                    exc_info=_logger.isEnabledFor(logging.DEBUG),
+                )
 
         super().on_end(span)
 

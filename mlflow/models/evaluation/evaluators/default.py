@@ -93,6 +93,9 @@ class DefaultEvaluator(BuiltInEvaluator):
         """
         Get a list of builtin metrics for the model type.
         """
+        if self.model_type is None:
+            return []
+
         text_metrics = [
             token_count(),
             toxicity(),
@@ -187,9 +190,9 @@ class DefaultEvaluator(BuiltInEvaluator):
                 _logger.warning(
                     "Setting the latency to 0 for all entries because the model is not provided."
                 )
-                self.metrics_values.update(
-                    {_LATENCY_METRIC_NAME: MetricValue(scores=[0.0] * len(input_df))}
-                )
+                self.metrics_values.update({
+                    _LATENCY_METRIC_NAME: MetricValue(scores=[0.0] * len(input_df))
+                })
             model_predictions = self.dataset.predictions_data
 
         output_column_name = self.predictions

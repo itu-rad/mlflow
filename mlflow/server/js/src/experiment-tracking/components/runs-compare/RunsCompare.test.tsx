@@ -1,3 +1,4 @@
+import { jest, expect, describe, beforeEach, test } from '@jest/globals';
 import { MockedReduxStoreProvider } from '../../../common/utils/TestUtils';
 import {
   renderWithIntl,
@@ -61,7 +62,7 @@ jest.mock('../runs-charts/hooks/useIsInViewport', () => ({
 jest.setTimeout(30000); // Larger timeout for integration testing
 
 // Helper function to assert order of HTMLElements
-function assertElementsInOrder(elements: HTMLElement[]) {
+function expectElementsInOrder(elements: HTMLElement[]) {
   for (let i = 0; i < elements.length - 1; i++) {
     const current = elements[i];
     const next = elements[i + 1];
@@ -251,8 +252,13 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
   };
 
   const getChartArea = (chartTitle: string) => {
-    const firstMetricHeading = screen.getByRole('heading', { name: chartTitle });
-    return firstMetricHeading.closest('[data-testid="experiment-view-compare-runs-card"]') as HTMLElement;
+    const displayTitle = chartTitle.split('/').pop() ?? chartTitle;
+    const chartPlot =
+      screen.queryByText(`[bar plot for ${chartTitle}]`) ??
+      screen.queryByText(`[line plot for ${chartTitle}]`) ??
+      screen.queryByRole('heading', { name: chartTitle }) ??
+      screen.getByRole('heading', { name: displayTitle });
+    return chartPlot.closest('[data-testid="experiment-view-compare-runs-card"]') as HTMLElement;
   };
 
   const getSectionArea = (sectionName: string) => {
@@ -315,11 +321,32 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
       } as any,
     });
 
+    // This fork seeds line charts down to step 0, so the static metric is a line
+    // plot where upstream would render a bar.
     await waitFor(() => {
-      assertElementsInOrder([
-        screen.getByText('[bar plot for metric-static]'),
+      expectElementsInOrder([
+        screen.getByText('[line plot for metric-static]'),
         screen.getByText('[line plot for metric-with-history]'),
       ]);
+    });
+  });
+
+  test('uses full metric paths to disambiguate duplicate leaf names', async () => {
+    currentUIState.compareRunCharts = undefined;
+
+    createComponentMock({
+      comparedRuns: [{ runUuid: 'run_latest', runName: 'Last run', runInfo: {} }] as any,
+      latestMetricsByRunUuid: {
+        run_latest: {
+          'groupA/duplicate_leaf': { key: 'groupA/duplicate_leaf', value: 1, step: 0 },
+          'groupB/duplicate_leaf': { key: 'groupB/duplicate_leaf', value: 2, step: 0 },
+        },
+      } as any,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'groupA/duplicate_leaf' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'groupB/duplicate_leaf' })).toBeInTheDocument();
     });
   });
 
@@ -344,7 +371,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('Model metrics'),
         screen.getByText('System metrics'),
@@ -380,7 +407,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(async () => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('Model metrics'),
         screen.getByText('System metrics'),
         screen.getByText('tmp'),
@@ -400,7 +427,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(async () => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('System metrics'),
         screen.getByText('Model metrics'),
         screen.getByText('tmp'),
@@ -433,7 +460,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
 
     await waitFor(() => {
       expect(screen.queryByText('tmp1')).not.toBeInTheDocument();
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('tmp2'),
         screen.getByText('Model metrics'),
@@ -471,7 +498,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('tmp1'),
         screen.getByText('tmp2'),
@@ -505,7 +532,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('tmp2'),
         screen.getByText('Model metrics'),
@@ -554,7 +581,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp2'),
         screen.getByText('tmp'),
         screen.getByText('Model metrics'),
@@ -564,7 +591,9 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
   });
 
-  test('detecting metric history and updating bar chart to line chart', async () => {
+  // Upstream seeds a bar chart here and upgrades it once history appears. This fork
+  // seeds line charts down to step 0, so the chart is a line plot in both phases.
+  test('keeps a metric chart as a line chart as history is detected', async () => {
     currentUIState.compareRunCharts = undefined;
     currentUIState.compareRunSections = undefined;
 
@@ -579,8 +608,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      // Test that the chart is initialized as a bar chart
-      expect(screen.getByText('[bar plot for tmp/metric-with-history]')).toBeInTheDocument();
+      expect(screen.getByText('[line plot for tmp/metric-with-history]')).toBeInTheDocument();
     });
 
     cleanup();
@@ -601,7 +629,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      // Test that the chart is updated to a line chart
+      // Still a line chart now that a run with real history is present.
       expect(screen.getByText('[line plot for tmp/metric-with-history]')).toBeInTheDocument();
     });
   });
@@ -628,7 +656,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section1/metric3]'),
         screen.getByText('[bar plot for section1/metric5]'),
         screen.getByText('[bar plot for section1/metric6]'),
@@ -661,7 +689,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section1/metric3]'),
         screen.getByText('[bar plot for section1/metric4]'),
         screen.getByText('[bar plot for section1/metric5]'),
@@ -693,7 +721,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section1/metric5]'),
         screen.getByText('[bar plot for section2/metric6]'),
       ]);
@@ -741,7 +769,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section1/metric3]'),
         screen.getByText('[bar plot for section1/metric7]'),
         screen.getByText('[bar plot for section1/metric4]'),
@@ -773,7 +801,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section1/metric5]'),
         screen.getByText('[bar plot for section2/metric6]'),
       ]);
@@ -821,7 +849,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[bar plot for section2/metric6]'),
         screen.getByText('[bar plot for section1/metric3]'),
         screen.getByText('[bar plot for section1/metric5]'),
@@ -859,7 +887,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('tmp2'),
         screen.getByText('Model metrics'),
@@ -904,7 +932,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp'),
         screen.getByText('tmp1'),
         screen.getByText('tmp2'),
@@ -985,7 +1013,7 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     });
 
     await waitFor(() => {
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('tmp/image'),
         screen.getByText('tmp1/image3'),
         screen.getByText('tmp2/image1'),
@@ -1100,10 +1128,12 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
     currentUIState.compareRunCharts = undefined;
     currentUIState.compareRunSections = undefined;
 
-    // Render a component with a group and a run:
+    // Render a component with a group, a remaining runs group header, and its member run:
     // - a group contains aggregated "metric_1" data indicating history
     // - a group contains aggregated "metric_2" data not indicating any history
-    // - a run contains "metric_3" data indicating history
+    //   (still a line plot in this fork, which seeds line charts down to step 0)
+    // - a remaining runs group header contains aggregated "metric_3" data indicating history
+    // - an ungrouped run (put into the remaining group) contains "metric_3" data indicating history
     createComponentMock({
       groupBy: 'metric_1',
       comparedRuns: [
@@ -1127,6 +1157,23 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
           },
         },
         {
+          runUuid: '',
+          rowUuid: 'remaining_group',
+          groupParentInfo: {
+            groupId: 'remaining_group',
+            groupingValues: [],
+            isRemainingRunsGroup: true,
+            runUuids: ['run_1'],
+            aggregatedMetricData: {
+              metric_3: {
+                key: 'metric_3',
+                value: 1,
+                maxStep: 3,
+              },
+            },
+          },
+        },
+        {
           runUuid: 'run_1',
           runName: 'First run',
           runInfo: { runUuid: 'run_1' },
@@ -1142,9 +1189,9 @@ describe.each(testCases)('RunsCompare $description', ({ setup: testCaseSetup }) 
 
     await waitFor(() => {
       // Assert correct chart types for metrics
-      assertElementsInOrder([
+      expectElementsInOrder([
         screen.getByText('[line plot for metric_1]'),
-        screen.getByText('[bar plot for metric_2]'),
+        screen.getByText('[line plot for metric_2]'),
         screen.getByText('[line plot for metric_3]'),
       ]);
     });

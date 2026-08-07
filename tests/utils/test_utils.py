@@ -1,12 +1,16 @@
+import importlib.metadata
+import socket
 from unittest import mock
 
 import pytest
+from packaging.version import Version
 
 from mlflow.utils import (
     AttrDict,
     _chunk_dict,
     _get_fully_qualified_class_name,
     _truncate_dict,
+    get_installed_version,
     merge_dicts,
 )
 
@@ -169,7 +173,6 @@ def test_subclass_hasattr():
 
 
 def test_setattr():
-    """Test that AttrDict supports setting attributes."""
     d = AttrDict({"a": 1, "b": 2})
 
     # Set existing attribute
@@ -185,7 +188,6 @@ def test_setattr():
 
 
 def test_delattr():
-    """Test that AttrDict supports deleting attributes."""
     d = AttrDict({"a": 1, "b": 2, "c": 3})
 
     # Delete existing attribute
@@ -202,3 +204,51 @@ def test_delattr_non_existent():
     d = AttrDict({"a": 1, "b": 2, "c": 3})
     with pytest.raises(KeyError, match="nonexistent"):
         del d.nonexistent
+
+
+def test_find_free_port():
+    from mlflow.utils import find_free_port
+
+    port = find_free_port()
+    assert isinstance(port, int)
+    assert 1024 <= port <= 65535
+
+
+def test_is_port_available_returns_true_for_free_port():
+    from mlflow.utils import find_free_port, is_port_available
+
+    port = find_free_port()
+    assert is_port_available(port) is True
+
+
+def test_is_port_available_returns_false_for_bound_port():
+    from mlflow.utils import is_port_available
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        bound_port = s.getsockname()[1]
+        assert is_port_available(bound_port) is False
+
+
+def test_get_installed_version_installed():
+    assert get_installed_version("mlflow") == Version(importlib.metadata.version("mlflow"))
+
+
+def test_get_installed_version_not_installed():
+    assert get_installed_version("this-package-does-not-exist-xyz") is None
+
+
+def test_get_installed_version_package_not_found():
+    with mock.patch(
+        "importlib.metadata.version",
+        side_effect=importlib.metadata.PackageNotFoundError("foo"),
+    ) as mock_version:
+        assert get_installed_version("foo") is None
+        mock_version.assert_called_once_with("foo")
+
+
+@pytest.mark.parametrize("raw", [None, "", "not-a-version", "18.x-aarch64-photon-scala2"])
+def test_get_installed_version_missing_or_invalid(raw):
+    with mock.patch("importlib.metadata.version", return_value=raw) as mock_version:
+        assert get_installed_version("foo") is None
+        mock_version.assert_called_once_with("foo")

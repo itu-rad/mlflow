@@ -26,13 +26,10 @@ import {
 } from '../utils/MetricsUtils';
 import type { Location, NavigateFunction } from '../../common/utils/RoutingUtils';
 import { RunsChartsCard } from './runs-charts/components/cards/RunsChartsCard';
-import {
-  RunsChartsCardConfig,
-  RunsChartsLineCardConfig,
-  RunsChartsLineChartYAxisType,
-  RunsChartType,
-} from './runs-charts/runs-charts.types';
-import { RunsChartsRunData, RunsChartsLineChartXAxisType } from './runs-charts/components/RunsCharts.common';
+import type { RunsChartsLineCardConfig } from './runs-charts/runs-charts.types';
+import { RunsChartsCardConfig, RunsChartsLineChartYAxisType, RunsChartType } from './runs-charts/runs-charts.types';
+import type { RunsChartsRunData } from './runs-charts/components/RunsCharts.common';
+import { RunsChartsLineChartXAxisType } from './runs-charts/components/RunsCharts.common';
 import { RunsChartsTooltipWrapper } from './runs-charts/hooks/useRunsChartsTooltip';
 import { RunsChartsTooltipBody } from './runs-charts/components/RunsChartsTooltipBody';
 import { RunsChartsFullScreenModal } from './runs-charts/components/RunsChartsFullScreenModal';
@@ -50,7 +47,7 @@ const GET_METRIC_HISTORY_MAX_RESULTS = 25000;
 // Convert X-axis type from URL to chart config
 const convertXAxisType = (selectedXAxis: string | string[] | any): RunsChartsLineChartXAxisType => {
   // Handle union type from URL parsing
-  const axisType = Array.isArray(selectedXAxis) ? selectedXAxis[0] : selectedXAxis || 'time_relative';
+  const axisType = Array.isArray(selectedXAxis) ? selectedXAxis[0] : selectedXAxis;
 
   switch (axisType) {
     case 'step':
@@ -60,6 +57,8 @@ const convertXAxisType = (selectedXAxis: string | string[] | any): RunsChartsLin
     case 'relative':
       return RunsChartsLineChartXAxisType.TIME_RELATIVE;
     default:
+      // radT tracks resource metrics over wall-clock, so relative time is the
+      // useful default rather than step.
       return RunsChartsLineChartXAxisType.TIME_RELATIVE;
   }
 };
@@ -293,7 +292,6 @@ export class MetricsPlotPanel extends React.Component<MetricsPlotPanelProps, Met
         while (nextPageToken) {
           const uid = getUUID();
           requestIds.push(uid);
-          /* eslint-disable no-await-in-loop */
           const nextPageResp = await this.props.getMetricHistoryApi(
             runUuid,
             metricKey,
@@ -326,7 +324,6 @@ export class MetricsPlotPanel extends React.Component<MetricsPlotPanelProps, Met
   };
 
   getMetrics = () => {
-    /* eslint-disable no-param-reassign */
     const state = this.getUrlState();
     const selectedMetricsSet = new Set(state.selectedMetricKeys);
     const { selectedXAxis } = state;
@@ -539,7 +536,7 @@ export class MetricsPlotPanel extends React.Component<MetricsPlotPanelProps, Met
           hidden: false,
           color: getStableColorForRun(runUuid),
           displayName: runNames?.[index] || runDisplayNames?.[index] || runUuid,
-        } as RunsChartsRunData),
+        }) as RunsChartsRunData,
     );
   };
 

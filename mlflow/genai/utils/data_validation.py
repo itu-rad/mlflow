@@ -16,7 +16,10 @@ def check_model_prediction(predict_fn: Callable[..., Any], sample_input: Any):
         predict_fn: The predict function to be evaluated.
         sample_input: A sample input to the model.
     """
-    _logger.info("Testing model prediction with the first sample in the dataset.")
+    _logger.info(
+        "Testing model prediction with the first sample in the dataset. To disable this check, "
+        "set the MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION environment variable to True."
+    )
 
     # Wrap the function to add a decorator for disabling tracing
     @trace_disabled
@@ -52,10 +55,11 @@ def _validate_function_and_input_compatibility(
     # Check if input keys match function parameters
     _validate_input_keys_match_function_params(params, sample_input.keys(), e)
 
-    # For other errors, show a generic error message
+    # error_code is INVALID_PARAMETER_VALUE but this is a prediction function failure
     raise MlflowException.invalid_parameter_value(
         "Failed to run the prediction function specified in the `predict_fn` "
-        f"parameter. Input: {sample_input}. Error: {e}\n\n"
+        f"parameter. Input: {sample_input}. Error: {e}\n\n",
+        error_class="PREDICTION_FUNCTION_FAILED",
     ) from e
 
 
@@ -110,19 +114,17 @@ def _validate_input_keys_match_function_params(
     if len(param_names) > 3:
         input_example["..."] = "..."
 
-    code_sample = "\n".join(
-        [
-            "```python",
-            "data = [",
-            "    {",
-            '        "inputs": {',
-            *(f'            "{k}": "{v}",' for k, v in input_example.items()),
-            "        }",
-            "    }",
-            "]",
-            "```",
-        ]
-    )
+    code_sample = "\n".join([
+        "```python",
+        "data = [",
+        "    {",
+        '        "inputs": {',
+        *(f'            "{k}": "{v}",' for k, v in input_example.items()),
+        "        }",
+        "    }",
+        "]",
+        "```",
+    ])
 
     raise MlflowException.invalid_parameter_value(
         "The `inputs` column must be a dictionary with the parameter names of "

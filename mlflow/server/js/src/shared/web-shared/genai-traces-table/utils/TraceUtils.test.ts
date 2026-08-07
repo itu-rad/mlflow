@@ -1,9 +1,10 @@
+import { describe, it, expect } from '@jest/globals';
 import { uniq } from 'lodash';
 
-import { ModelTraceSpanType } from '@databricks/web-shared/model-trace-explorer';
+import type { ModelTraceInfoV3, ModelTraceLocationMlflowExperiment } from '../../model-trace-explorer/ModelTrace.types';
+import { ModelTraceSpanType } from '../../model-trace-explorer/ModelTrace.types';
 
 import {
-  convertTraceInfoV3ToModelTraceInfo,
   getRetrievedContextFromTrace,
   getTracesTagKeys,
   MLFLOW_INTERNAL_PREFIX,
@@ -12,21 +13,26 @@ import {
   createCustomMetadataColumnId,
   getTagKeyFromColumnId,
   createTagColumnId,
+  convertTraceInfoV3ToRunEvalEntry,
+  getSpansLocation,
+  decodeOtelAnyValue,
+  getSpanAttribute,
+  isOtelAnyValue,
 } from './TraceUtils';
 import { KnownEvaluationResultAssessmentName } from '../components/GenAiEvaluationTracesReview.utils';
-import type { RunEvaluationResultAssessment, RunEvaluationTracesDataEntry, TraceInfoV3 } from '../types';
+import type { RunEvaluationResultAssessment, RunEvaluationTracesDataEntry } from '../types';
 
 const makeTrace = (spans: any[], tags: Record<string, string> | undefined = undefined) =>
   ({
     info: { tags },
     data: { spans },
-  } as any); // Cast to any to avoid bringing full ModelTrace typings into the test
+  }) as any; // Cast to any to avoid bringing full ModelTrace typings into the test
 
 const makeAssessment = (name: string, rest: Partial<RunEvaluationResultAssessment>) =>
   ({
     name,
     ...rest,
-  } as Partial<RunEvaluationResultAssessment>); // Cast to any to keep the test lightweight
+  }) as Partial<RunEvaluationResultAssessment>; // Cast to any to keep the test lightweight
 
 describe('getTracesTagKeys', () => {
   it('returns unique tag keys that do not start with the internal prefix', () => {
@@ -70,52 +76,8 @@ describe('getTracesTagKeys', () => {
   });
 });
 
-describe('convertTraceInfoV3ToModelTraceInfo', () => {
-  it('uses client_request_id if available', () => {
-    const trace: Partial<TraceInfoV3> = {
-      trace_id: 'trace-id-123',
-      client_request_id: 'client-req-456',
-      tags: {
-        alpha: 'a',
-        beta: 'b',
-      },
-    };
-
-    const result = convertTraceInfoV3ToModelTraceInfo(trace as TraceInfoV3);
-    expect(result.request_id).toEqual('client-req-456');
-
-    // Check that tags are converted to an array of { key, value }
-    expect(result.tags).toEqual([
-      { key: 'alpha', value: 'a' },
-      { key: 'beta', value: 'b' },
-    ]);
-  });
-
-  it('falls back to trace_id if client_request_id is not provided', () => {
-    const trace: Partial<TraceInfoV3> = {
-      trace_id: 'trace-id-789',
-      tags: {
-        gamma: 'c',
-      },
-    };
-    const result = convertTraceInfoV3ToModelTraceInfo(trace as TraceInfoV3);
-    expect(result.request_id).toEqual('trace-id-789');
-    expect(result.tags).toEqual([{ key: 'gamma', value: 'c' }]);
-  });
-
-  it('returns undefined tags if no tags are provided', () => {
-    const trace: Partial<TraceInfoV3> = {
-      trace_id: 'trace-id-000',
-      client_request_id: 'client-req-000',
-      // tags is omitted
-    };
-    const result = convertTraceInfoV3ToModelTraceInfo(trace as TraceInfoV3);
-    expect(result.tags).toBeUndefined();
-  });
-});
-
 describe('applyTraceInfoV3ToEvalEntry', () => {
-  const traceInfoWithExpectations: TraceInfoV3 = {
+  const dummyTraceInfo: ModelTraceInfoV3 = {
     trace_id: 'trace123',
     trace_location: {
       type: 'MLFLOW_EXPERIMENT',
@@ -127,103 +89,7 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
     request: '{"messages": [{"content": "Hello"}]}',
     response: '{"data": "output"}',
     tags: { key1: 'value1' },
-    assessments: [
-      {
-        assessment_id: 'a-fe16ebce1999476c95d5b73cf78e47f8',
-        assessment_name: 'json_array_expect',
-        trace_id: 'tr-2f6e2efbac5d2eb3f9b46a67e973a533',
-        source: {
-          source_type: 'HUMAN',
-          source_id: 'test',
-        },
-        create_time: '2025-09-17T04:13:36.753Z',
-        last_update_time: '2025-09-17T04:13:36.753Z',
-        expectation: {
-          serialized_value: {
-            serialization_format: 'JSON_FORMAT',
-            value: '["str", 123, {"nested": "obj"}]',
-          },
-        },
-        rationale: '',
-      },
-      {
-        assessment_id: 'a-4eb4ea163a9a4b41935f953a63a36706',
-        assessment_name: 'number_expect',
-        trace_id: 'tr-2f6e2efbac5d2eb3f9b46a67e973a533',
-        source: {
-          source_type: 'HUMAN',
-          source_id: 'test',
-        },
-        create_time: '2025-09-17T04:13:58.740Z',
-        last_update_time: '2025-09-17T04:13:58.740Z',
-        expectation: {
-          value: 1234,
-        },
-        rationale: '',
-      },
-      {
-        assessment_id: 'a-c180c83a996042a99b735540292b30ba',
-        assessment_name: 'json_obj_expect',
-        trace_id: 'tr-2f6e2efbac5d2eb3f9b46a67e973a533',
-        source: {
-          source_type: 'HUMAN',
-          source_id: 'test',
-        },
-        create_time: '2025-09-17T04:13:12.356Z',
-        last_update_time: '2025-09-17T04:13:12.356Z',
-        expectation: {
-          serialized_value: {
-            serialization_format: 'JSON_FORMAT',
-            value: '{"test": "value"}',
-          },
-        },
-        rationale: '',
-      },
-      {
-        assessment_id: 'a-5ebe632dbdd8489ebb1b2c3a3f703632',
-        assessment_name: 'str_expect',
-        trace_id: 'tr-2f6e2efbac5d2eb3f9b46a67e973a533',
-        source: {
-          source_type: 'HUMAN',
-          source_id: 'test',
-        },
-        create_time: '2025-09-17T04:14:11.445Z',
-        last_update_time: '2025-09-17T04:14:11.445Z',
-        expectation: {
-          value: 'test',
-        },
-        rationale: '',
-      },
-      {
-        assessment_id: 'a-2243eda2cc5644109ebbc8c3271266cc',
-        assessment_name: 'bool_expect',
-        trace_id: 'tr-2f6e2efbac5d2eb3f9b46a67e973a533',
-        source: {
-          source_type: 'HUMAN',
-          source_id: 'test',
-        },
-        create_time: '2025-09-17T04:10:11.897Z',
-        last_update_time: '2025-09-17T04:10:11.897Z',
-        expectation: {
-          value: true,
-        },
-        rationale: '',
-      },
-    ],
-  } as TraceInfoV3;
-
-  const dummyTraceInfo: TraceInfoV3 = {
-    trace_id: 'trace123',
-    trace_location: {
-      type: 'MLFLOW_EXPERIMENT',
-      mlflow_experiment: { experiment_id: 'exp123' },
-    },
-    request_time: '2023-10-01T00:00:00Z',
-    state: 'OK',
-    client_request_id: 'client456',
-    request: '{"messages": [{"content": "Hello"}]}',
-    response: '{"data": "output"}',
-    tags: { key1: 'value1' },
+    trace_metadata: {},
     assessments: [
       // Expectation assessment: will be processed into targets.
       {
@@ -233,11 +99,10 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
         last_update_time: '2023-10-01T00:00:00Z',
         assessment_name: 'expTest',
         expectation: { value: 'Expected target' },
-        feedback: undefined,
         error: undefined,
         metadata: {},
         rationale: '',
-      },
+      } as any,
       // Feedback assessment: will be processed into responseAssessmentsByName.
       {
         assessment_id: 'feed123',
@@ -245,7 +110,6 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
         create_time: '2023-10-01T00:00:00Z',
         last_update_time: '2023-10-01T00:00:00Z',
         assessment_name: 'feedTest',
-        expectation: undefined,
         feedback: { value: 5 },
         error: undefined,
         metadata: {},
@@ -262,7 +126,6 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
         create_time: '2023-10-01T00:00:00Z',
         last_update_time: '2023-10-01T00:00:00Z',
         assessment_name: KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT,
-        expectation: undefined,
         feedback: { value: 'pass' },
         error: undefined,
         metadata: {
@@ -284,7 +147,6 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
         last_update_time: '2023-10-01T00:00:00Z',
         assessment_name: 'agent/latency_seconds',
         expectation: { value: 'ignore_me' },
-        feedback: undefined,
         error: undefined,
         metadata: {},
         rationale: '',
@@ -319,6 +181,9 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
     const expected: RunEvaluationTracesDataEntry = {
       // Evaluation data is replaced by converted fields
       evaluationId: dummyTraceInfo.trace_id, // "trace123"
+      fullTraceId: `trace:/${
+        (dummyTraceInfo.trace_location as ModelTraceLocationMlflowExperiment).mlflow_experiment.experiment_id
+      }/${dummyTraceInfo.trace_id}`,
       requestId: dummyTraceInfo.client_request_id || '', // "client456"
       inputsId: dummyTraceInfo.trace_id, // same as trace_id
       // inputsTitle should be the content of the last message in the "messages" array.
@@ -413,19 +278,520 @@ describe('applyTraceInfoV3ToEvalEntry', () => {
     expect(result[0]).toEqual(expected);
   });
 
-  it('should correctly convert TraceInfoV3 expectations', () => {
-    const input: RunEvaluationTracesDataEntry[] = [{ ...baseEvalEntry, traceInfo: traceInfoWithExpectations }];
-    const result = applyTraceInfoV3ToEvalEntry(input);
+  it('should handle expectation assessment with mixed-type array values', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace456',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp456' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client789',
+      request: '{}',
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [
+        {
+          assessment_id: 'mixed123',
+          trace_id: 'trace456',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'mixedArray',
+          expectation: { value: ['{"key": "val"}', true, 42, { obj: 'value' }] },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+        } as any,
+      ],
+    };
 
-    expect(result[0].targets).toEqual({
-      // JSON should be parsed
-      json_array_expect: ['str', 123, { nested: 'obj' }],
-      json_obj_expect: { test: 'value' },
-      // primitives should remain as primitives
-      number_expect: 1234,
-      str_expect: 'test',
-      bool_expect: true,
+    const evalEntry: RunEvaluationTracesDataEntry = {
+      ...baseEvalEntry,
+      traceInfo,
+    };
+
+    const result = applyTraceInfoV3ToEvalEntry([evalEntry]);
+
+    // String should be parsed, non-strings should be preserved
+    expect(result[0].targets['mixedArray']).toEqual([{ key: 'val' }, true, 42, { obj: 'value' }]);
+  });
+
+  it('should handle expectation assessment with boolean value', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace789',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp789' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client999',
+      request: '{}',
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [
+        {
+          assessment_id: 'bool123',
+          trace_id: 'trace789',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'booleanValue',
+          expectation: { value: true },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+        } as any,
+      ],
+    };
+
+    const evalEntry: RunEvaluationTracesDataEntry = {
+      ...baseEvalEntry,
+      traceInfo,
+    };
+
+    const result = applyTraceInfoV3ToEvalEntry([evalEntry]);
+
+    // Boolean should be preserved
+    expect(result[0].targets['booleanValue']).toBe(true);
+  });
+
+  it('should handle expectation assessment with numeric value', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace999',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp999' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client111',
+      request: '{}',
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [
+        {
+          assessment_id: 'num123',
+          trace_id: 'trace999',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'numericValue',
+          expectation: { value: 3.14 },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+        } as any,
+      ],
+    };
+
+    const evalEntry: RunEvaluationTracesDataEntry = {
+      ...baseEvalEntry,
+      traceInfo,
+    };
+
+    const result = applyTraceInfoV3ToEvalEntry([evalEntry]);
+
+    // Number should be preserved
+    expect(result[0].targets['numericValue']).toBe(3.14);
+  });
+
+  it('should filter out invalid assessments (valid === false)', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_invalid',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_invalid' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_invalid',
+      request: '{}',
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [
+        {
+          assessment_id: 'exp_valid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'validExpectation',
+          expectation: { value: 'Should be included' },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          // valid is undefined, should be treated as valid
+        } as any,
+        {
+          assessment_id: 'exp_invalid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'invalidExpectation',
+          expectation: { value: 'Should NOT be included' },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          valid: false, // This assessment has been overridden
+        } as any,
+        {
+          assessment_id: 'feed_valid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'validFeedback',
+          expectation: undefined,
+          feedback: { value: 'yes' },
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          valid: true, // Explicitly valid
+          source: {
+            source_type: 'AI_JUDGE',
+            source_id: 'judge1',
+          },
+        },
+        {
+          assessment_id: 'feed_invalid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'invalidFeedback',
+          expectation: undefined,
+          feedback: { value: 'no' },
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          valid: false, // This assessment has been overridden
+          source: {
+            source_type: 'AI_JUDGE',
+            source_id: 'judge1',
+          },
+        },
+        {
+          assessment_id: 'overall_valid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT,
+          expectation: undefined,
+          feedback: { value: 'pass' },
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          valid: true,
+          source: {
+            source_type: 'HUMAN',
+            source_id: 'user123',
+          },
+        },
+        {
+          assessment_id: 'overall_invalid',
+          trace_id: 'trace_invalid',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT,
+          expectation: undefined,
+          feedback: { value: 'fail' },
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          valid: false, // This overall assessment was overridden
+          source: {
+            source_type: 'AI_JUDGE',
+            source_id: 'judge1',
+          },
+        },
+      ],
+    };
+
+    const evalEntry: RunEvaluationTracesDataEntry = {
+      ...baseEvalEntry,
+      traceInfo,
+    };
+
+    const result = applyTraceInfoV3ToEvalEntry([evalEntry]);
+
+    // Valid expectation should be in targets
+    expect(result[0].targets.validExpectation).toBe('Should be included');
+
+    // Invalid expectation should NOT be in targets
+    expect(result[0].targets.invalidExpectation).toBeUndefined();
+
+    // Valid feedback should be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName.validFeedback).toHaveLength(1);
+    expect(result[0].responseAssessmentsByName.validFeedback[0].stringValue).toBe('yes');
+
+    // Invalid feedback should NOT be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName.invalidFeedback).toBeUndefined();
+    // Valid overall assessment should be present
+    expect(result[0].overallAssessments).toHaveLength(1);
+    expect(result[0].overallAssessments[0].stringValue).toBe('pass');
+    expect(result[0].overallAssessments[0].source?.sourceType).toBe('HUMAN');
+
+    // Invalid overall assessment should NOT be in overallAssessments
+    // (we verify by checking length is 1, not 2)
+    expect(result[0].overallAssessments).toHaveLength(1);
+
+    // Valid overall assessment should also be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName[KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT]).toHaveLength(1);
+    expect(
+      result[0].responseAssessmentsByName[KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT][0].stringValue,
+    ).toBe('pass');
+  });
+
+  it('should include session-level assessments in responseAssessmentsByName for table display', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_session',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_session' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_session',
+      request: '{}',
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [
+        // Trace-level expectation assessment
+        {
+          assessment_id: 'exp_trace',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'traceLevelExpectation',
+          expectation: { value: 'Should be included' },
+          feedback: undefined,
+          error: undefined,
+          metadata: {},
+          rationale: '',
+        } as any,
+        // Session-level expectation assessment
+        {
+          assessment_id: 'exp_session',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'sessionLevelExpectation',
+          expectation: { value: 'Session level target' },
+          feedback: undefined,
+          error: undefined,
+          metadata: {
+            'mlflow.trace.session': 'session-123',
+          },
+          rationale: '',
+        } as any,
+        // Trace-level feedback assessment
+        {
+          assessment_id: 'feed_trace',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'traceLevelFeedback',
+          expectation: undefined,
+          feedback: { value: 'good' },
+          error: undefined,
+          metadata: {},
+          rationale: '',
+          source: {
+            source_type: 'HUMAN',
+            source_id: 'user1',
+          },
+        },
+        // Session-level feedback assessment
+        {
+          assessment_id: 'feed_session',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: 'sessionLevelFeedback',
+          expectation: undefined,
+          feedback: { value: 'bad' },
+          error: undefined,
+          metadata: {
+            'mlflow.trace.session': 'session-123',
+          },
+          rationale: '',
+          source: {
+            source_type: 'HUMAN',
+            source_id: 'user1',
+          },
+        },
+        // Trace-level overall assessment
+        {
+          assessment_id: 'overall_trace',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT,
+          expectation: undefined,
+          feedback: { value: 'pass' },
+          error: undefined,
+          metadata: {},
+          rationale: 'Looks good',
+          source: {
+            source_type: 'AI_JUDGE',
+            source_id: 'judge1',
+          },
+        },
+        // Session-level overall assessment
+        {
+          assessment_id: 'overall_session',
+          trace_id: 'trace_session',
+          create_time: '2023-10-01T00:00:00Z',
+          last_update_time: '2023-10-01T00:00:00Z',
+          assessment_name: KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT,
+          expectation: undefined,
+          feedback: { value: 'fail' },
+          error: undefined,
+          metadata: {
+            'mlflow.trace.session': 'session-456',
+          },
+          rationale: 'Session level issue',
+          source: {
+            source_type: 'AI_JUDGE',
+            source_id: 'judge1',
+          },
+        },
+      ],
+    };
+
+    const evalEntry: RunEvaluationTracesDataEntry = {
+      ...baseEvalEntry,
+      traceInfo,
+    };
+
+    const result = applyTraceInfoV3ToEvalEntry([evalEntry]);
+
+    // Trace-level expectation should be in targets
+    expect(result[0].targets['traceLevelExpectation']).toBe('Should be included');
+
+    // Session-level expectation should also be in targets
+    expect(result[0].targets['sessionLevelExpectation']).toBe('Session level target');
+
+    // Trace-level feedback should be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName['traceLevelFeedback']).toHaveLength(1);
+    expect(result[0].responseAssessmentsByName['traceLevelFeedback'][0].stringValue).toBe('good');
+
+    // Session-level feedback should also be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName['sessionLevelFeedback']).toHaveLength(1);
+    expect(result[0].responseAssessmentsByName['sessionLevelFeedback'][0].stringValue).toBe('bad');
+
+    // Both trace-level and session-level overall assessments should be present
+    expect(result[0].overallAssessments).toHaveLength(2);
+    expect(result[0].overallAssessments[0].stringValue).toBe('pass');
+    expect(result[0].overallAssessments[0].rationale).toBe('Looks good');
+    expect(result[0].overallAssessments[1].stringValue).toBe('fail');
+    expect(result[0].overallAssessments[1].rationale).toBe('Session level issue');
+
+    // Both overall assessments should also be in responseAssessmentsByName
+    expect(result[0].responseAssessmentsByName[KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT]).toHaveLength(2);
+    expect(
+      result[0].responseAssessmentsByName[KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT][0].stringValue,
+    ).toBe('pass');
+    expect(
+      result[0].responseAssessmentsByName[KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT][1].stringValue,
+    ).toBe('fail');
+  });
+});
+
+describe('convertTraceInfoV3ToRunEvalEntry', () => {
+  it('should extract user message from Langchain format input using request_preview', () => {
+    const langchainRequest = JSON.stringify([
+      [
+        {
+          content: 'How to use Databricks?',
+          additional_kwargs: {},
+          response_metadata: {},
+          type: 'human',
+          name: null,
+          id: null,
+        },
+      ],
+    ]);
+
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_langchain',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_langchain' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_langchain',
+      request_preview: langchainRequest,
+      response_preview: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [],
+    };
+
+    const result = convertTraceInfoV3ToRunEvalEntry(traceInfo);
+
+    expect(result.inputsTitle).toEqual('How to use Databricks?');
+  });
+
+  it('should extract user message from OpenAI format input using request_preview', () => {
+    const openaiRequest = JSON.stringify({
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant' },
+        { role: 'user', content: 'Hello there' },
+      ],
     });
+
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_openai',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_openai' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_openai',
+      request_preview: openaiRequest,
+      response_preview: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [],
+    };
+
+    const result = convertTraceInfoV3ToRunEvalEntry(traceInfo);
+
+    expect(result.inputsTitle).toEqual('Hello there');
+  });
+
+  it('should fallback to deprecated request field when request_preview is not available', () => {
+    const openaiRequest = JSON.stringify({
+      messages: [{ role: 'user', content: 'Using deprecated request field' }],
+    });
+
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_deprecated',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_deprecated' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_deprecated',
+      request: openaiRequest,
+      response: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [],
+    };
+
+    const result = convertTraceInfoV3ToRunEvalEntry(traceInfo);
+
+    expect(result.inputsTitle).toEqual('Using deprecated request field');
+  });
+
+  it('should fallback to stringified JSON for unknown formats', () => {
+    const unknownRequest = JSON.stringify({ custom: 'data', values: [1, 2, 3] });
+
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace_unknown',
+      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp_unknown' } },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      client_request_id: 'client_unknown',
+      request_preview: unknownRequest,
+      response_preview: '{}',
+      tags: {},
+      trace_metadata: {},
+      assessments: [],
+    };
+
+    const result = convertTraceInfoV3ToRunEvalEntry(traceInfo);
+
+    expect(result.inputsTitle).toContain('"custom"');
+    expect(result.inputsTitle).toContain('"data"');
   });
 });
 
@@ -585,7 +951,7 @@ describe('Custom Metadata Column ID Round Trip', () => {
 
 describe('Custom Metadata Integration', () => {
   it('should handle trace metadata with custom fields', () => {
-    const traceWithCustomMetadata: TraceInfoV3 = {
+    const traceWithCustomMetadata: ModelTraceInfoV3 = {
       trace_id: 'trace123',
       trace_location: {
         type: 'MLFLOW_EXPERIMENT',
@@ -618,7 +984,7 @@ describe('Custom Metadata Integration', () => {
   });
 
   it('should handle trace metadata with no custom fields', () => {
-    const traceWithOnlyMlflowMetadata: TraceInfoV3 = {
+    const traceWithOnlyMlflowMetadata: ModelTraceInfoV3 = {
       trace_id: 'trace123',
       trace_location: {
         type: 'MLFLOW_EXPERIMENT',
@@ -645,7 +1011,7 @@ describe('Custom Metadata Integration', () => {
   });
 
   it('should handle trace with no metadata', () => {
-    const traceWithNoMetadata: TraceInfoV3 = {
+    const traceWithNoMetadata: ModelTraceInfoV3 = {
       trace_id: 'trace123',
       trace_location: {
         type: 'MLFLOW_EXPERIMENT',
@@ -659,8 +1025,172 @@ describe('Custom Metadata Integration', () => {
       tags: { key1: 'value1' },
       // trace_metadata is undefined
       assessments: [],
-    };
+    } as any;
 
     expect(traceWithNoMetadata.trace_metadata).toBeUndefined();
+  });
+});
+
+describe('getSpansLocation', () => {
+  it('returns undefined when traceInfo is undefined', () => {
+    expect(getSpansLocation(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when traceInfo.tags is undefined', () => {
+    const traceInfo = {
+      trace_id: 'trace123',
+      trace_location: {
+        type: 'MLFLOW_EXPERIMENT',
+        mlflow_experiment: { experiment_id: 'exp123' },
+      },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      // tags is undefined
+    } as any;
+
+    expect(getSpansLocation(traceInfo)).toBeUndefined();
+  });
+
+  it('returns undefined when traceInfo.tags is null', () => {
+    const traceInfo = {
+      trace_id: 'trace123',
+      trace_location: {
+        type: 'MLFLOW_EXPERIMENT',
+        mlflow_experiment: { experiment_id: 'exp123' },
+      },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      tags: null,
+    } as any;
+
+    expect(getSpansLocation(traceInfo)).toBeUndefined();
+  });
+
+  it('returns undefined when tags exist but spansLocation tag is not present', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace123',
+      trace_location: {
+        type: 'MLFLOW_EXPERIMENT',
+        mlflow_experiment: { experiment_id: 'exp123' },
+      },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      tags: { someOtherTag: 'value' },
+    } as any;
+
+    expect(getSpansLocation(traceInfo)).toBeUndefined();
+  });
+
+  it('returns the spans location when the tag is present', () => {
+    const traceInfo: ModelTraceInfoV3 = {
+      trace_id: 'trace123',
+      trace_location: {
+        type: 'MLFLOW_EXPERIMENT',
+        mlflow_experiment: { experiment_id: 'exp123' },
+      },
+      request_time: '2023-10-01T00:00:00Z',
+      state: 'OK',
+      tags: { 'mlflow.trace.spansLocation': 'TRACKING_STORE' },
+    } as any;
+
+    expect(getSpansLocation(traceInfo)).toBe('TRACKING_STORE');
+  });
+});
+
+describe('decodeOtelAnyValue', () => {
+  it('decodes primitive values', () => {
+    expect(decodeOtelAnyValue({ string_value: 'hello' })).toBe('hello');
+    expect(decodeOtelAnyValue({ bool_value: false })).toBe(false);
+    expect(decodeOtelAnyValue({ int_value: 42 })).toBe(42);
+    expect(decodeOtelAnyValue({ int_value: '9007199254740000' })).toBe(9007199254740000);
+    // int64 strings beyond the safe integer range are kept as strings to avoid losing precision
+    expect(decodeOtelAnyValue({ int_value: '9007199254740993' })).toBe('9007199254740993');
+    expect(decodeOtelAnyValue({ double_value: 3.14 })).toBe(3.14);
+    expect(decodeOtelAnyValue({ bytes_value: 'aGVsbG8=' })).toBe('aGVsbG8=');
+  });
+
+  it('decodes unset values to null', () => {
+    expect(decodeOtelAnyValue(undefined)).toBeNull();
+    expect(decodeOtelAnyValue({})).toBeNull();
+  });
+
+  it('recursively decodes kvlist and array values', () => {
+    expect(
+      decodeOtelAnyValue({
+        kvlist_value: {
+          values: [
+            {
+              key: 'messages',
+              value: {
+                array_value: {
+                  values: [
+                    {
+                      kvlist_value: {
+                        values: [
+                          { key: 'role', value: { string_value: 'user' } },
+                          { key: 'content', value: { string_value: 'How are you?' } },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+            // null fields are serialized as kvlist entries without a value
+            { key: 'stop' },
+          ],
+        },
+      }),
+    ).toEqual({
+      messages: [{ role: 'user', content: 'How are you?' }],
+      stop: null,
+    });
+  });
+
+  it('decodes empty kvlist and array values', () => {
+    expect(decodeOtelAnyValue({ kvlist_value: {} })).toEqual({});
+    expect(decodeOtelAnyValue({ array_value: {} })).toEqual([]);
+  });
+});
+
+describe('isOtelAnyValue', () => {
+  it('returns true for OTLP AnyValue shapes', () => {
+    expect(isOtelAnyValue({ string_value: 'hello' })).toBe(true);
+    expect(isOtelAnyValue({ kvlist_value: { values: [] } })).toBe(true);
+    expect(isOtelAnyValue({ array_value: { values: [] } })).toBe(true);
+    // an empty object is how OTLP represents null
+    expect(isOtelAnyValue({})).toBe(true);
+  });
+
+  it('returns false for other values', () => {
+    expect(isOtelAnyValue('hello')).toBe(false);
+    expect(isOtelAnyValue(42)).toBe(false);
+    expect(isOtelAnyValue(null)).toBe(false);
+    expect(isOtelAnyValue([])).toBe(false);
+    expect(isOtelAnyValue({ custom_field: 'value' })).toBe(false);
+  });
+});
+
+describe('getSpanAttribute', () => {
+  it('returns values from V3 flat object attributes', () => {
+    expect(getSpanAttribute({ 'mlflow.spanInputs': '{"x": 10}' }, 'mlflow.spanInputs')).toBe('{"x": 10}');
+  });
+
+  it('decodes typed values from OTLP array attributes', () => {
+    const attributes = [
+      { key: 'mlflow.spanType', value: { string_value: 'LLM' } },
+      {
+        key: 'mlflow.spanInputs',
+        value: {
+          kvlist_value: {
+            values: [{ key: 'question', value: { string_value: 'How are you?' } }],
+          },
+        },
+      },
+    ] as any;
+
+    expect(getSpanAttribute(attributes, 'mlflow.spanType')).toBe('LLM');
+    expect(getSpanAttribute(attributes, 'mlflow.spanInputs')).toEqual({ question: 'How are you?' });
+    expect(getSpanAttribute(attributes, 'nonexistent')).toBeUndefined();
   });
 });

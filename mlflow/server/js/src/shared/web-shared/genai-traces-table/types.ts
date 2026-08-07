@@ -1,7 +1,9 @@
-import type { ModelTrace, ModelTraceInfo, ModelTraceSpan } from '../model-trace-explorer';
+import type { GetTraceFunction } from './hooks/useGetTrace';
+import type { ModelTraceInfoV3, ModelTraceSpan } from '../model-trace-explorer/ModelTrace.types';
 
 export type AssessmentDType = 'string' | 'numeric' | 'boolean' | 'pass-fail' | 'unknown';
 export type AssessmentType = 'AI_JUDGE' | 'HUMAN' | 'CODE';
+export type TraceTablePageSource = 'experiment-traces' | 'chat-sessions' | 'run-view-traces';
 
 // Reflects structure logged by mlflow.log_table()
 export interface RawGenaiEvaluationArtifactResponse {
@@ -33,6 +35,9 @@ export interface AssessmentInfo {
 
   // True if if the assesment contains at least one error
   containsErrors?: boolean;
+
+  // True if any assessment in this column has session metadata
+  isSessionLevelAssessment?: boolean;
 }
 
 interface RootCauseAssessmentInfo {
@@ -114,9 +119,9 @@ export interface AssessmentAggregates {
   currentCounts?: AssessmentRunCounts;
   otherCounts?: AssessmentRunCounts;
 
-  // Numeric values for the current run and other run.
-  currentNumericValues?: number[];
-  otherNumericValues?: number[];
+  // Numeric averages for the current run and other run.
+  currentNumericAverage?: number;
+  otherNumericAverage?: number;
 
   currentNumRootCause: number;
   otherNumRootCause: number;
@@ -127,6 +132,15 @@ export interface AssessmentAggregates {
   assessmentFilters: AssessmentFilter[];
 }
 
+/**
+ * Server-side assessment count data from the trace metrics API.
+ * Each entry represents one (assessmentName, value) → count tuple.
+ */
+export interface AssessmentCountMetrics {
+  data: { assessmentName: string; assessmentValue: string; count: number }[];
+  isLoading: boolean;
+}
+
 export interface EvaluationsOverviewTableSort {
   key: string;
   type: TracesTableColumnType;
@@ -134,21 +148,22 @@ export interface EvaluationsOverviewTableSort {
 }
 
 export interface TraceActions {
-  exportToEvals?: {
-    showExportTracesToDatasetsModal: boolean;
-    setShowExportTracesToDatasetsModal: (visible: boolean) => void;
-    renderExportTracesToDatasetsModal: ({
-      selectedTraceInfos,
-    }: {
-      selectedTraceInfos: ModelTrace['info'][];
-    }) => React.ReactNode;
-  };
+  exportToEvals?: boolean;
+  addToReviewQueue?: boolean;
   deleteTracesAction?: {
-    deleteTraces: (experimentId: string, traceIds: string[]) => Promise<any>;
+    deleteTraces?: (experimentId: string, traceIds: string[]) => Promise<any>;
+    isDisabled?: boolean;
+    disabledReason?: string;
   };
+
   editTags?: {
-    showEditTagsModalForTrace: (trace: ModelTraceInfo) => void;
+    showEditTagsModalForTrace: (trace: ModelTraceInfoV3) => void;
     EditTagsModal: React.ReactNode;
+  };
+
+  runJudgesAction?: {
+    showRunJudgesModal: (traceIds: string[]) => void;
+    RunJudgesModal: React.ReactNode;
   };
 }
 
@@ -158,6 +173,9 @@ export interface AssessmentFilter {
   filterValue: AssessmentValueType;
   // Only defined when filtering on an assessment for RCA values.
   filterType?: 'rca' | undefined;
+  // Optional operator for numeric comparison filters (>, <, >=, <=).
+  // Defaults to equality (=) when not specified.
+  filterOperator?: FilterOperator;
   run: string;
 }
 export type TableFilter = {
@@ -165,7 +183,7 @@ export type TableFilter = {
   column: TracesTableColumnGroup | string;
   // Should be defined if a column group is used.
   key?: string;
-  operator: FilterOperator;
+  operator: FilterOperator | HiddenFilterOperator;
   value: TableFilterValue;
 };
 
@@ -178,14 +196,37 @@ export interface TableFilterOption {
 
 export interface TableFilterOptions {
   source: TableFilterOption[];
+  prompt?: TableFilterOption[];
 }
 
 export enum FilterOperator {
   EQUALS = '=',
+  NOT_EQUALS = '!=',
   GREATER_THAN = '>',
   LESS_THAN = '<',
   GREATER_THAN_OR_EQUALS = '>=',
   LESS_THAN_OR_EQUALS = '<=',
+  CONTAINS = 'CONTAINS',
+  RLIKE = 'RLIKE',
+  IS_NULL = 'IS NULL',
+  IS_NOT_NULL = 'IS NOT NULL',
+}
+
+/**
+ * Helper to check if an operator is a null-type operator (IS NULL or IS NOT NULL).
+ * These operators don't require a value.
+ */
+export const isNullOperator = (operator: string): boolean => {
+  return operator === FilterOperator.IS_NULL || operator === FilterOperator.IS_NOT_NULL;
+};
+
+// operators that are not displayed in the filter popover, but are
+// still supported in the backend. eventually we should implement
+// functionality for all these operators, but some of them take a
+// little more thought from the UX side (e.g. we need to remove the
+// value input for IS NOT NULL filters)
+export enum HiddenFilterOperator {
+  IS_NOT_NULL = 'IS NOT NULL',
 }
 
 export interface AssessmentDropdownSuggestionItem {
@@ -212,70 +253,8 @@ export type RunEvaluationTracesRetrievalChunk = {
   target?: string;
 };
 
-// TODO(nsthorat): Move these to the shared types location:
-// https://src.dev.databricks.com/databricks-eng/universe/-/blob/webapp/web/js/genai/shared/types.ts
-// The shared type does not yet support TraceInfoV3.
-// I had to add these here because the types in genai/shared/types are TraceV2.
-// The types in trace-explorer are also TraceV2.
-export type AssessmentV3 = {
-  assessment_id: string;
-  assessment_name: string;
-  trace_id: string;
-  span_id?: string;
-  create_time: string;
-  last_update_time: string;
-  feedback?: {
-    value: string | number | boolean;
-    error?: {
-      error_code?: string;
-      error_message?: string;
-    };
-  };
-  expectation?: {
-    value: string | string[];
-    serialized_value?: {
-      serialization_format?: string;
-      value: string | string[];
-    };
-    error?: {
-      error_code?: string;
-      error_message?: string;
-    };
-  };
-  metadata?: Record<string, string>;
-  rationale?: string;
-  error?: {
-    error_code?: string;
-    error_message?: string;
-  };
-  source?: {
-    source_type?: 'HUMAN' | 'LLM_JUDGE' | 'CODE';
-    source_id?: string;
-  };
-};
-
-export type TraceInfoV3 = {
-  trace_id: string;
-  client_request_id?: string;
-  trace_location: {
-    type: 'MLFLOW_EXPERIMENT' | 'INFERENCE_TABLE';
-    mlflow_experiment?: { experiment_id: string };
-    inference_table?: { full_table_name: string };
-  };
-  request?: string;
-  request_preview?: string;
-  response?: string;
-  response_preview?: string;
-  request_time: string;
-  execution_duration?: string;
-  state: 'STATE_UNSPECIFIED' | 'OK' | 'ERROR' | 'IN_PROGRESS';
-  trace_metadata?: Record<string, string>;
-  tags?: Record<string, string>;
-  assessments?: AssessmentV3[];
-};
-
 export type TraceV3 = {
-  info: TraceInfoV3;
+  info: ModelTraceInfoV3;
   data: {
     spans: ModelTraceSpan[];
   };
@@ -286,6 +265,7 @@ export type TraceV3 = {
  */
 export type RunEvaluationTracesDataEntry = {
   evaluationId: string;
+  fullTraceId?: string;
   requestId: string;
   inputsTitle?: string;
   inputs: Record<string, any>;
@@ -304,8 +284,11 @@ export type RunEvaluationTracesDataEntry = {
   metrics: Record<string, RunEvaluationResultMetric>;
   retrievalChunks?: RunEvaluationTracesRetrievalChunk[];
 
+  // Issues associated with this trace (id and name)
+  issues?: { id: string; name: string }[];
+
   // NOTE(nsthorat): We will slowly migrate to this type.
-  traceInfo?: TraceInfoV3;
+  traceInfo?: ModelTraceInfoV3;
 };
 
 export interface EvalTraceComparisonEntry {
@@ -336,6 +319,7 @@ export enum TracesTableColumnType {
 // This represents columns that are grouped together.
 // For example, each assessment is its own column, but they are all grouped under the "Assessments" column group.
 export enum TracesTableColumnGroup {
+  BASE = 'BASE',
   ASSESSMENT = 'ASSESSMENT',
   EXPECTATION = 'EXPECTATION',
   TAG = 'TAG',
@@ -346,14 +330,20 @@ export const TracesTableColumnGroupToLabelMap = {
   [TracesTableColumnGroup.ASSESSMENT]: 'Assessments',
   [TracesTableColumnGroup.EXPECTATION]: 'Expectations',
   [TracesTableColumnGroup.TAG]: 'Tags',
-  // We don't show a label for the info column group
-  [TracesTableColumnGroup.INFO]: '\u00A0',
+  [TracesTableColumnGroup.INFO]: 'Other Attributes',
+  // BASE is the leading section; we don't show a label band for it in the table header
+  [TracesTableColumnGroup.BASE]: '\u00A0',
 };
 
 export interface TracesTableColumn {
-  // This is the assessment name for assessments, and a static string for trace info and input columns
+  /** This is the assessment name for assessments, and a static string for trace info and input columns */
   id: string;
+  /** The label for the column, displayed in the table header. */
   label: string;
+  /** The label for the column used in filter dropdowns. If not provided, defaults to `label`. */
+  filterLabel?: string;
+  /** The order of the column in the filter dropdowns. Lower numbers appear first. Defaults to 1. */
+  filterOrder?: number;
   type: TracesTableColumnType;
   group?: TracesTableColumnGroup;
 
@@ -381,5 +371,11 @@ export type NumericAggregate = {
   min: number;
   max: number;
   maxCount: number;
+  average: number;
   counts: NumericAggregateCount[];
 };
+
+/**
+ * Required input fields that identify a dataset as multi-turn.
+ */
+export const REQUIRED_MULTITURN_INPUT_FIELDS = new Set(['goal']);

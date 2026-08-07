@@ -2,35 +2,35 @@
 
 This is the core package of the [MLflow Typescript SDK](https://github.com/mlflow/mlflow/tree/main/libs/typescript). It is a skinny package that includes the core tracing functionality and manual instrumentation.
 
-| Package              | NPM                                                                                                                           | Description                                                |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [mlflow-tracing](./) | [![npm package](https://img.shields.io/npm/v/mlflow-tracing?style=flat-square)](https://www.npmjs.com/package/mlflow-tracing) | The core tracing functionality and manual instrumentation. |
+| Package            | NPM                                                                                                                           | Description                                                |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [@mlflow/core](./) | [![npm package](https://img.shields.io/npm/v/%40mlflow%2Fcore?style=flat-square)](https://www.npmjs.com/package/@mlflow/core) | The core tracing functionality and manual instrumentation. |
 
 ## Installation
 
 ```bash
-npm install mlflow-tracing
+npm install @mlflow/core
 ```
 
 ## Quickstart
 
-Start MLflow Tracking Server if you don't have one already:
+Start MLflow Tracking Server. If you have a local Python environment, you can run the following command:
 
 ```bash
 pip install mlflow
 mlflow server --backend-store-uri sqlite:///mlruns.db --port 5000
 ```
 
-Self-hosting MLflow server requires Python 3.10 or higher. If you don't have one, you can also use [managed MLflow service](https://mlflow.org/#get-started) for free to get started quickly.
+If you don't have Python environment locally, MLflow also supports Docker deployment or managed services. See [Self-Hosting Guide](https://mlflow.org/docs/latest/self-hosting/index.html) for getting started.
 
 Instantiate MLflow SDK in your application:
 
 ```typescript
-import * as mlflow from 'mlflow-tracing';
+import * as mlflow from '@mlflow/core';
 
 mlflow.init({
   trackingUri: 'http://localhost:5000',
-  experimentId: '<experiment-id>'
+  experimentId: '<experiment-id>',
 });
 ```
 
@@ -44,9 +44,9 @@ const getWeather = mlflow.trace(
   (city: string) => {
     return `The weather in ${city} is sunny`;
   },
-  // Pass options to set span name. See https://mlflow.org/docs/latest/genai/tracing/app-instrumentation/typescript-sdk
+  // Pass options to set span name. See https://mlflow.org/docs/latest/genai/tracing/quickstart
   // for the full list of options.
-  { name: 'get-weather' }
+  { name: 'get-weather' },
 );
 getWeather('San Francisco');
 
@@ -57,7 +57,7 @@ span.end();
 
 ## Documentation 📘
 
-Official documentation for MLflow Typescript SDK can be found [here](https://mlflow.org/docs/latest/genai/tracing/app-instrumentation/typescript-sdk).
+Official documentation for MLflow Typescript SDK can be found [here](https://mlflow.org/docs/latest/genai/tracing/quickstart).
 
 ## License
 

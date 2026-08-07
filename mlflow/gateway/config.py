@@ -8,10 +8,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pydantic
 import yaml
-from packaging.version import Version
-from pydantic import ConfigDict, ValidationError
+from pydantic import ConfigDict, ValidationError, field_validator, model_validator
 from pydantic.json import pydantic_encoder
 
+from mlflow.environment_variables import (
+    MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_ENV,
+    MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_FILE,
+)
 from mlflow.exceptions import MlflowException
 from mlflow.gateway.base_models import ConfigModel, LimitModel, ResponseModel
 from mlflow.gateway.constants import (
@@ -25,13 +28,12 @@ from mlflow.gateway.utils import (
     is_valid_ai21labs_model,
     is_valid_endpoint_name,
     is_valid_mosiacml_chat_model,
+    normalize_databricks_base_url,
 )
-from mlflow.utils.pydantic_utils import IS_PYDANTIC_V2_OR_NEWER, field_validator, model_validator
 
 _logger = logging.getLogger(__name__)
 
-if IS_PYDANTIC_V2_OR_NEWER:
-    from pydantic import SerializeAsAny
+from pydantic import SerializeAsAny
 
 if TYPE_CHECKING:
     from mlflow.deployments.server.config import Endpoint
@@ -54,6 +56,16 @@ class Provider(str, Enum):
     DATABRICKS = "databricks"
     MISTRAL = "mistral"
     TOGETHERAI = "togetherai"
+    LITELLM = "litellm"
+    AZURE = "azure"
+    GROQ = "groq"
+    DEEPSEEK = "deepseek"
+    XAI = "xai"
+    OPENROUTER = "openrouter"
+    OLLAMA = "ollama"
+    VERTEX_AI = "vertex_ai"
+    PORTKEY = "portkey"
+    SAP_AI_CORE = "sap-ai-core"
 
     @classmethod
     def values(cls):
@@ -72,6 +84,21 @@ class EndpointType(str, Enum):
     LLM_V1_COMPLETIONS = "llm/v1/completions"
     LLM_V1_CHAT = "llm/v1/chat"
     LLM_V1_EMBEDDINGS = "llm/v1/embeddings"
+
+
+class GatewayRequestType(str, Enum):
+    """
+    Gateway request types for the Gateway endpoints.
+    """
+
+    UNIFIED_CHAT = "unified/chat"
+    UNIFIED_EMBEDDINGS = "unified/embeddings"
+    PASSTHROUGH_MODEL_OPENAI_CHAT = "passthrough/model/openai-chat"
+    PASSTHROUGH_MODEL_OPENAI_EMBEDDINGS = "passthrough/model/openai-embeddings"
+    PASSTHROUGH_MODEL_OPENAI_RESPONSES = "passthrough/model/openai-responses"
+    PASSTHROUGH_MODEL_ANTHROPIC_MESSAGES = "passthrough/model/anthropic-messages"
+    PASSTHROUGH_MODEL_GEMINI_GENERATE_CONTENT = "passthrough/model/gemini-generateContent"
+    RAW_PROXY = "proxy/raw"
 
 
 class CohereConfig(ConfigModel):
@@ -170,6 +197,7 @@ class OpenAIConfig(ConfigModel):
 class AnthropicConfig(ConfigModel):
     anthropic_api_key: str
     anthropic_version: str = "2023-06-01"
+    anthropic_api_base: str = "https://api.anthropic.com/v1"
 
     @field_validator("anthropic_api_key", mode="before")
     def validate_anthropic_api_key(cls, value):
@@ -219,9 +247,13 @@ class AWSIdAndKey(AWSBaseConfig):
     aws_session_token: str | None = None
 
 
+class AWSBearerToken(AWSBaseConfig):
+    aws_bearer_token: str
+
+
 class AmazonBedrockConfig(ConfigModel):
     # order here is important, at least for pydantic<2
-    aws_config: AWSRole | AWSIdAndKey | AWSBaseConfig
+    aws_config: AWSBearerToken | AWSRole | AWSIdAndKey | AWSBaseConfig
 
 
 class MistralConfig(ConfigModel):
@@ -230,6 +262,101 @@ class MistralConfig(ConfigModel):
     @field_validator("mistral_api_key", mode="before")
     def validate_mistral_api_key(cls, value):
         return _resolve_api_key_from_input(value)
+
+
+class _AuthConfigKey:
+    """Keys used in auth configuration."""
+
+    AUTH_MODE = "auth_mode"
+    API_KEY = "api_key"
+    API_BASE = "api_base"
+
+
+class _OpenAICompatibleConfig(ConfigModel):
+    """Config for providers that use the OpenAI-compatible API format.
+
+    Args:
+        api_key: API key for authentication (resolved via ``_resolve_api_key_from_input``).
+        api_base: Optional base URL override. When ``None``, the provider's
+            ``DEFAULT_API_BASE`` class attribute is used instead.
+    """
+
+    api_key: str
+    api_base: str | None = None
+
+    @field_validator("api_key", mode="before")
+    def validate_api_key(cls, value):
+        return _resolve_api_key_from_input(value)
+
+
+class PortkeyConfig(_OpenAICompatibleConfig):
+    """Config for the Portkey AI gateway provider.
+
+    In addition to the Portkey API key, Portkey must be told which upstream provider
+    to route a request to. This is expressed either as a provider slug
+    (``portkey_provider``), a saved Portkey config (``portkey_config``), or a Model
+    Catalog reference embedded in the model name (e.g. ``@openai-prod/gpt-4o``).
+
+    Args:
+        portkey_provider: Value for the ``x-portkey-provider`` header. Either a Model
+            Catalog integration slug prefixed with ``@`` (e.g. ``@openai-prod``), or a
+            bare provider slug (e.g. ``openai``), which requires ``provider_api_key``.
+        portkey_config: Value for the ``x-portkey-config`` header. A saved Portkey
+            config ID (e.g. ``pc-xxxx``) or a raw JSON config string.
+        provider_api_key: Upstream provider API key, forwarded to Portkey via the
+            ``Authorization`` header. Only needed when ``portkey_provider`` is a bare
+            provider slug whose credentials are not stored in Portkey.
+    """
+
+    portkey_provider: str | None = None
+    portkey_config: str | None = None
+    provider_api_key: str | None = None
+
+    @field_validator("provider_api_key", mode="before")
+    def validate_provider_api_key(cls, value):
+        if value is None:
+            return None
+        return _resolve_api_key_from_input(value)
+
+
+class VertexAIConfig(ConfigModel):
+    vertex_project: str
+    vertex_location: str | None = None
+    vertex_credentials: str | None = None
+
+
+class LiteLLMConfig(ConfigModel):
+    litellm_provider: str | None = None
+    litellm_auth_config: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    def validate_litellm_auth_config(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        auth_config = values.get("litellm_auth_config")
+        if auth_config is None or not isinstance(auth_config, dict):
+            return values
+
+        auth_config = dict(auth_config)
+
+        # Remove MLflow-specific auth_mode as it's not supported by LiteLLM
+        auth_config.pop(_AuthConfigKey.AUTH_MODE, None)
+
+        # Resolve API key from environment variable or file
+        api_key = auth_config.get(_AuthConfigKey.API_KEY)
+        if isinstance(api_key, str):
+            auth_config[_AuthConfigKey.API_KEY] = _resolve_api_key_from_input(api_key)
+
+        # Normalize Databricks base URL to include /serving-endpoints
+        provider = values.get("litellm_provider")
+        if provider == Provider.DATABRICKS and (
+            api_base := auth_config.get(_AuthConfigKey.API_BASE)
+        ):
+            auth_config[_AuthConfigKey.API_BASE] = normalize_databricks_base_url(api_base)
+
+        values["litellm_auth_config"] = auth_config
+        return values
 
 
 class ModelInfo(ResponseModel):
@@ -243,36 +370,38 @@ def _resolve_api_key_from_input(api_key_input):
 
     Input formats accepted:
 
+    - environment variable name that stores the api key (prefixed with ``$``)
+      (only when ``MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_ENV`` is ``true``)
     - Path to a file as a string which will have the key loaded from it
-    - environment variable name that stores the api key
+      (only when ``MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_FILE`` is ``true``)
     - the api key itself
     """
-
     if not isinstance(api_key_input, str):
         raise MlflowException.invalid_parameter_value(
             "The api key provided is not a string. Please provide either an environment "
             "variable key, a path to a file containing the api key, or the api key itself"
         )
 
-    # try reading as an environment variable
-    if api_key_input.startswith("$"):
+    # try reading as an environment variable (only for legacy YAML-config gateway)
+    if api_key_input.startswith("$") and MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_ENV.get():
         env_var_name = api_key_input[1:]
-        if env_var := os.getenv(env_var_name):
+        if env_var := os.environ.get(env_var_name):
             return env_var
         else:
             raise MlflowException.invalid_parameter_value(
                 f"Environment variable {env_var_name!r} is not set"
             )
 
-    # try reading from a local path
-    file = pathlib.Path(api_key_input)
-    try:
-        if file.is_file():
-            return file.read_text()
-    except OSError:
-        # `is_file` throws an OSError if `api_key_input` exceeds the maximum filename length
-        # (e.g., 255 characters on Unix).
-        pass
+    # try reading from a local path (only for legacy YAML-config gateway)
+    if MLFLOW_GATEWAY_RESOLVE_API_KEY_FROM_FILE.get():
+        file = pathlib.Path(api_key_input)
+        try:
+            if file.is_file():
+                return file.read_text()
+        except OSError:
+            # `is_file` throws an OSError if `api_key_input` exceeds the maximum filename length
+            # (e.g., 255 characters on Unix).
+            pass
 
     # if the key itself is passed, return
     return api_key_input
@@ -281,10 +410,7 @@ def _resolve_api_key_from_input(api_key_input):
 class Model(ConfigModel):
     name: str | None = None
     provider: str | Provider
-    if IS_PYDANTIC_V2_OR_NEWER:
-        config: SerializeAsAny[ConfigModel] | None = None
-    else:
-        config: ConfigModel | None = None
+    config: SerializeAsAny[ConfigModel] | None = None
 
     @field_validator("provider", mode="before")
     def validate_provider(cls, value):
@@ -305,12 +431,7 @@ class Model(ConfigModel):
 
         # For Pydantic v2: 'context' is a ValidationInfo object with a 'data' attribute.
         # For Pydantic v1: 'context' is dict-like 'values'.
-        if IS_PYDANTIC_V2_OR_NEWER:
-            provider = context.data.get("provider")
-        else:
-            provider = context.get("provider") if context else None
-
-        if provider:
+        if provider := context.data.get("provider"):
             config_type = provider_registry.get(provider).CONFIG_TYPE
             return config_type(**val) if isinstance(val, dict) else val
         raise MlflowException.invalid_parameter_value(
@@ -327,12 +448,7 @@ class AliasedConfigModel(ConfigModel):
     Enables use of field aliases in a configuration model for backwards compatibility
     """
 
-    if Version(pydantic.__version__) >= Version("2.0"):
-        model_config = ConfigDict(populate_by_name=True)
-    else:
-
-        class Config:
-            allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Limit(LimitModel):
@@ -372,31 +488,29 @@ class EndpointConfig(AliasedConfigModel):
                 )
         return model
 
-    @model_validator(mode="after", skip_on_failure=True)
-    def validate_route_type_and_model_name(cls, values):
-        if IS_PYDANTIC_V2_OR_NEWER:
-            route_type = values.endpoint_type
-            model = values.model
-        else:
-            route_type = values.get("endpoint_type")
-            model = values.get("model")
+    @model_validator(mode="after")
+    def validate_route_type_and_model_name(self):
         if (
-            model
-            and model.provider == "mosaicml"
-            and route_type == EndpointType.LLM_V1_CHAT
-            and not is_valid_mosiacml_chat_model(model.name)
+            self.model
+            and self.model.provider == "mosaicml"
+            and self.endpoint_type == EndpointType.LLM_V1_CHAT
+            and not is_valid_mosiacml_chat_model(self.model.name)
         ):
             raise MlflowException.invalid_parameter_value(
-                f"An invalid model has been specified for the chat route. '{model.name}'. "
+                f"An invalid model has been specified for the chat route. '{self.model.name}'. "
                 f"Ensure the model selected starts with one of: "
                 f"{MLFLOW_AI_GATEWAY_MOSAICML_CHAT_SUPPORTED_MODEL_PREFIXES}"
             )
-        if model and model.provider == "ai21labs" and not is_valid_ai21labs_model(model.name):
+        if (
+            self.model
+            and self.model.provider == "ai21labs"
+            and not is_valid_ai21labs_model(self.model.name)
+        ):
             raise MlflowException.invalid_parameter_value(
-                f"An Unsupported AI21Labs model has been specified: '{model.name}'. "
+                f"An Unsupported AI21Labs model has been specified: '{self.model.name}'. "
                 f"Please see documentation for supported models."
             )
-        return values
+        return self
 
     @field_validator("endpoint_type", mode="before")
     def validate_route_type(cls, value):
@@ -487,11 +601,7 @@ class _LegacyRoute(ConfigModel):
     route_url: str
     limit: Limit | None = None
 
-    class Config:
-        if IS_PYDANTIC_V2_OR_NEWER:
-            json_schema_extra = _ROUTE_EXTRA_SCHEMA
-        else:
-            schema_extra = _ROUTE_EXTRA_SCHEMA
+    model_config = ConfigDict(json_schema_extra=_ROUTE_EXTRA_SCHEMA)
 
     def to_endpoint(self):
         from mlflow.deployments.server.config import Endpoint
@@ -536,7 +646,9 @@ def _load_gateway_config(path: str | Path) -> GatewayConfig:
 def _save_route_config(config: GatewayConfig, path: str | Path) -> None:
     if isinstance(path, str):
         path = Path(path)
-    path.write_text(yaml.safe_dump(json.loads(json.dumps(config.dict(), default=pydantic_encoder))))
+    path.write_text(
+        yaml.safe_dump(json.loads(json.dumps(config.model_dump(), default=pydantic_encoder)))
+    )
 
 
 def _validate_config(config_path: str) -> GatewayConfig:

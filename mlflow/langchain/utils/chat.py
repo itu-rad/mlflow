@@ -2,24 +2,29 @@ import json
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Iterator
 from typing import Any
 
 import pydantic
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
-    ChatMessage,
     FunctionMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.messages import (
+    ChatMessage as LangChainChatMessage,
+)
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.outputs.generation import Generation
 
 from mlflow.environment_variables import MLFLOW_CONVERT_MESSAGES_DICT_FOR_LANGCHAIN
 from mlflow.exceptions import MlflowException
 from mlflow.tracing.constant import TokenUsageKey
 from mlflow.types.chat import (
+    AudioContentPart,
     ChatChoice,
     ChatChoiceDelta,
     ChatChunkChoice,
@@ -28,8 +33,8 @@ from mlflow.types.chat import (
     ChatCompletionResponse,
     ChatMessage,
     ChatUsage,
+    InputAudio,
 )
-from mlflow.utils import IS_PYDANTIC_V2_OR_NEWER
 
 _logger = logging.getLogger(__name__)
 
@@ -42,7 +47,92 @@ _TOKEN_USAGE_KEY_MAPPING = {
     # OpenAI Streaming, Anthropic, etc.
     "input_tokens": TokenUsageKey.INPUT_TOKENS,
     "output_tokens": TokenUsageKey.OUTPUT_TOKENS,
+    # Anthropic
+    "cache_read_input_tokens": TokenUsageKey.CACHE_READ_INPUT_TOKENS,
+    "cache_creation_input_tokens": TokenUsageKey.CACHE_CREATION_INPUT_TOKENS,
+    # Gemini
+    "cached_content_token_count": TokenUsageKey.CACHE_READ_INPUT_TOKENS,
 }
+
+
+# Maps MIME subtypes to the formats InputAudio accepts: Literal["wav", "mp3"].
+# Identity mappings (e.g. "wav" -> "wav") are handled by the fallback in _normalize_content.
+_MIME_TO_AUDIO_FORMAT: dict[str, str] = {
+    "x-wav": "wav",
+    "mpeg": "mp3",
+}
+
+
+def _normalize_content(
+    content: str | list[dict[str, Any]],
+) -> str | list[dict[str, Any]]:
+    """
+    Normalize multi-modal content blocks from LangChain's format to MLflow's expected format.
+
+    LangChain uses:
+
+        {"type": "audio", "source_type": "base64", "data": "...", "mime_type": "audio/wav"}
+
+    while MLflow expects:
+
+        {"type": "input_audio", "input_audio": {"data": "...", "format": "wav"}}
+
+    This function converts audio blocks to MLflow's format and returns the normalized content
+    so that it can be validated by :class:`~mlflow.types.chat.ChatMessage`.
+    """
+    if isinstance(content, str):
+        return content
+
+    normalized = []
+    for block in content:
+        match block:
+            case {
+                "type": "audio",
+                "source_type": "base64",
+                "mime_type": str(mime_type),
+                "data": str(data),
+            }:
+                # Extract and normalize format from mime_type (e.g. "audio/wav" -> "wav",
+                # "audio/mpeg" -> "mp3"). Strip parameters like "; codecs=..."
+                raw_subtype = mime_type.rsplit("/", 1)[-1].split(";")[0].strip()
+                audio_format = _MIME_TO_AUDIO_FORMAT.get(raw_subtype, raw_subtype)
+
+                try:
+                    audio_part = AudioContentPart(
+                        type="input_audio",
+                        input_audio=InputAudio(
+                            data=data,
+                            format=audio_format,
+                        ),
+                    )
+                except pydantic.ValidationError as e:
+                    raise MlflowException.invalid_parameter_value(
+                        f"Unsupported audio format {audio_format!r} derived from "
+                        f"mime_type {mime_type!r}. Supported formats: 'wav', 'mp3'."
+                    ) from e
+                normalized.append(audio_part.model_dump())
+            case {"type": "audio"}:
+                raise MlflowException.invalid_parameter_value(
+                    "Unsupported LangChain audio content. Only base64-encoded audio with a valid "
+                    "mime_type is supported for conversion to MLflow chat messages."
+                )
+            case _:
+                normalized.append(block)
+
+    return normalized
+
+
+def _extract_nested_token_details(d: dict[str, Any]) -> Iterator[tuple[str, int]]:
+    """Extract cached token counts from nested detail dicts."""
+    match d:
+        case {"input_token_details": {"cache_read": int(tokens)}}:
+            yield (TokenUsageKey.CACHE_READ_INPUT_TOKENS, tokens)
+    match d:
+        case {"input_token_details": {"cache_creation": int(tokens)}}:
+            yield (TokenUsageKey.CACHE_CREATION_INPUT_TOKENS, tokens)
+    match d:
+        case {"prompt_tokens_details": {"cached_tokens": int(tokens)}}:
+            yield (TokenUsageKey.CACHE_READ_INPUT_TOKENS, tokens)
 
 
 def convert_lc_message_to_chat_message(lc_message: BaseMessage) -> ChatMessage:
@@ -55,6 +145,7 @@ def convert_lc_message_to_chat_message(lc_message: BaseMessage) -> ChatMessage:
             # For Anthropic model tool calls are returned twice so we need to filter them out
             if isinstance(content, list):
                 content = [c for c in content if c["type"] != "tool_use"]
+            content = _normalize_content(content)
             return ChatMessage(
                 role="assistant",
                 # If tool calls present, content null value should be None not empty string
@@ -64,21 +155,21 @@ def convert_lc_message_to_chat_message(lc_message: BaseMessage) -> ChatMessage:
                 tool_calls=tool_calls,
             )
         else:
-            return ChatMessage(role="assistant", content=lc_message.content)
-    elif isinstance(lc_message, ChatMessage):
-        return ChatMessage(role=lc_message.role, content=lc_message.content)
+            return ChatMessage(role="assistant", content=_normalize_content(lc_message.content))
+    elif isinstance(lc_message, LangChainChatMessage):
+        return ChatMessage(role=lc_message.role, content=_normalize_content(lc_message.content))
     elif isinstance(lc_message, FunctionMessage):
-        return ChatMessage(role="function", content=lc_message.content)
+        return ChatMessage(role="function", content=_normalize_content(lc_message.content))
     elif isinstance(lc_message, ToolMessage):
         return ChatMessage(
             role="tool",
-            content=lc_message.content,
+            content=_normalize_content(lc_message.content),
             tool_call_id=lc_message.tool_call_id,
         )
     elif isinstance(lc_message, HumanMessage):
-        return ChatMessage(role="user", content=lc_message.content)
+        return ChatMessage(role="user", content=_normalize_content(lc_message.content))
     elif isinstance(lc_message, SystemMessage):
-        return ChatMessage(role="system", content=lc_message.content)
+        return ChatMessage(role="system", content=_normalize_content(lc_message.content))
     else:
         raise MlflowException.invalid_parameter_value(
             f"Unexpected message type. Expected a BaseMessage subclass, but got: {type(lc_message)}"
@@ -177,10 +268,7 @@ def try_transform_response_to_chat_format(response: Any) -> dict[str, Any]:
                 total_tokens=None,
             ),
         )
-        if IS_PYDANTIC_V2_OR_NEWER:
-            return transformed_response.model_dump(mode="json", exclude_unset=True)
-        else:
-            return json.loads(transformed_response.json(exclude_unset=True))
+        return transformed_response.model_dump(mode="json", exclude_unset=True)
     else:
         return response
 
@@ -206,10 +294,7 @@ def try_transform_response_iter_to_chat_format(chunk_iter):
             ],
         )
 
-        if IS_PYDANTIC_V2_OR_NEWER:
-            return transformed_response.model_dump(mode="json", exclude_unset=True)
-        else:
-            return json.loads(transformed_response.json(exclude_unset=True))
+        return transformed_response.model_dump(mode="json", exclude_unset=True)
 
     def _convert(chunk):
         if isinstance(chunk, str):
@@ -244,7 +329,7 @@ def try_transform_response_iter_to_chat_format(chunk_iter):
 def _convert_chat_request_or_throw(
     chat_request: dict[str, Any],
 ) -> list[BaseMessage]:
-    model = ChatCompletionRequest.validate_compat(chat_request)
+    model = ChatCompletionRequest.model_validate(chat_request)
     return [_chat_model_to_langchain_message(message) for message in model.messages]
 
 
@@ -258,7 +343,7 @@ def _convert_chat_request(chat_request: dict[str, Any] | list[dict[str, Any]]):
 def _get_lc_model_input_fields(lc_model) -> set[str]:
     try:
         if hasattr(lc_model, "input_schema"):
-            return set(lc_model.input_schema.__fields__)
+            return set(lc_model.input_schema.model_fields)
     except Exception as e:
         _logger.debug(
             f"Unexpected exception while checking LangChain input schema for"
@@ -281,9 +366,10 @@ def _should_transform_request_json_for_chat(lc_model):
 
     # Avoid converting the request to LangChain's Message format if the chain
     # is an AgentExecutor, as LangChainChatMessage might not be accepted by the chain
-    from langchain.agents import AgentExecutor
+    from mlflow.langchain._compat import try_import_agent_executor
 
-    if isinstance(lc_model, AgentExecutor):
+    AgentExecutor = try_import_agent_executor()
+    if AgentExecutor and isinstance(lc_model, AgentExecutor):
         return False
 
     input_fields = _get_lc_model_input_fields(lc_model)
@@ -360,6 +446,24 @@ def parse_token_usage(
     lc_generations: list[Generation],
 ) -> dict[str, int] | None:
     """Parse the token usage from the LangChain generations."""
+
+    # Check if this is streaming (contains ChatGenerationChunk)
+    is_streaming = any(isinstance(gen, ChatGenerationChunk) for gen in lc_generations)
+
+    if is_streaming:
+        # Streaming mode: collect all generations with usage, use only the last one
+        # (which contains the final cumulative token counts)
+        generations_with_usage = [
+            token_usage
+            for generation in lc_generations
+            if (token_usage := _parse_token_usage_from_generation(generation))
+        ]
+
+        if generations_with_usage:
+            return generations_with_usage[-1]
+        return None
+
+    # Non-streaming mode: existing behavior (sum all generations)
     aggregated = defaultdict(int)
     for generation in lc_generations:
         if token_usage := _parse_token_usage_from_generation(generation):
@@ -390,6 +494,11 @@ def _parse_token_counts(usage_metadata: dict[str, Any]) -> dict[str, int]:
     for key, value in usage_metadata.items():
         if usage_key := _TOKEN_USAGE_KEY_MAPPING.get(key):
             usage[usage_key] = value
+
+    # Extract from nested detail dicts (e.g. input_token_details.cache_read).
+    # Uses setdefault so flat keys above take priority.
+    for usage_key, value in _extract_nested_token_details(usage_metadata):
+        usage.setdefault(usage_key, value)
 
     # If the total tokens are not present, calculate it from the input and output tokens
     if usage and usage.get(TokenUsageKey.TOTAL_TOKENS) is None:

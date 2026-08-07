@@ -1,3 +1,4 @@
+import importlib.metadata
 import inspect
 import logging
 import socket
@@ -7,7 +8,7 @@ from contextlib import closing
 from itertools import islice
 from sys import version_info
 
-from mlflow.utils.pydantic_utils import IS_PYDANTIC_V2_OR_NEWER  # noqa: F401
+from packaging.version import InvalidVersion, Version
 
 PYTHON_VERSION = f"{version_info.major}.{version_info.minor}.{version_info.micro}"
 
@@ -17,6 +18,27 @@ _logger = logging.getLogger(__name__)
 
 def get_major_minor_py_version(py_version):
     return ".".join(py_version.split(".")[:2])
+
+
+def get_installed_version(dist_name: str) -> Version | None:
+    """Return the parsed version of an installed distribution, or ``None`` if it is not installed
+    or its metadata does not expose a parseable version. Never raises.
+
+    On some environments (e.g. Databricks Serverless) ``importlib.metadata.version`` can return
+    ``None`` or raise for a vendored/missing distribution, and ``Version(None)`` raises
+    ``TypeError``. Callers comparing against a threshold should treat ``None`` as "unknown" and
+    fall back to their safe default.
+    """
+    try:
+        raw = importlib.metadata.version(dist_name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        return Version(raw)
+    except InvalidVersion:
+        return None
 
 
 def reraise(tp, value, tb=None):
@@ -108,7 +130,7 @@ def merge_dicts(dict_a, dict_b, raise_on_duplicates=True):
     duplicate_keys = dict_a.keys() & dict_b.keys()
     if raise_on_duplicates and len(duplicate_keys) > 0:
         raise ValueError(f"The two merging dictionaries contains duplicate keys: {duplicate_keys}.")
-    return {**dict_a, **dict_b}
+    return dict_a | dict_b
 
 
 def _get_fully_qualified_class_name(obj):
@@ -168,6 +190,25 @@ def find_free_port():
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
+
+
+def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
+    """
+    Check if a port is available for binding.
+
+    Args:
+        port: The port number to check.
+        host: The host address to check. Defaults to localhost.
+
+    Returns:
+        True if the port is available, False if it's already in use.
+    """
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
 
 
 def check_port_connectivity():

@@ -65,12 +65,10 @@ def xgb_model():
 @pytest.fixture(scope="module")
 def xgb_model_signature():
     return ModelSignature(
-        inputs=Schema(
-            [
-                ColSpec(name="sepal length (cm)", type=DataType.double),
-                ColSpec(name="sepal width (cm)", type=DataType.double),
-            ]
-        ),
+        inputs=Schema([
+            ColSpec(name="sepal length (cm)", type=DataType.double),
+            ColSpec(name="sepal width (cm)", type=DataType.double),
+        ]),
         outputs=Schema([TensorSpec(np.dtype("float32"), (-1, 3))]),
     )
 
@@ -471,7 +469,12 @@ def test_pyfunc_serve_and_score_sklearn(model):
     model.fit(X, y)
 
     with mlflow.start_run():
-        model_info = mlflow.sklearn.log_model(model, name="model", input_example=X.head(3))
+        model_info = mlflow.sklearn.log_model(
+            model,
+            name="model",
+            input_example=X.head(3),
+            skops_trusted_types=["xgboost.core.Booster", "xgboost.sklearn.XGBClassifier"],
+        )
 
     inference_payload = load_serving_example(model_info.model_uri)
     resp = pyfunc_serve_and_score_model(
@@ -494,7 +497,8 @@ def test_load_pyfunc_succeeds_for_older_models_with_pyfunc_data_field(xgb_model,
     ``model_class`` in XGBoost flavor.
     """
     model = xgb_model.model
-    mlflow.xgboost.save_model(xgb_model=model, path=model_path)
+    # Use xgb format explicitly since this test verifies backward compatibility with old models
+    mlflow.xgboost.save_model(xgb_model=model, path=model_path, model_format="xgb")
 
     model_conf_path = os.path.join(model_path, "MLmodel")
     model_conf = Model.load(model_conf_path)

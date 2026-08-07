@@ -21,7 +21,7 @@ from mlflow.entities.model_registry.model_version_stages import (
     STAGE_NONE,
     get_canonical_stage,
 )
-from mlflow.environment_variables import MLFLOW_REGISTRY_DIR
+from mlflow.environment_variables import MLFLOW_ALLOW_FILE_STORE, MLFLOW_REGISTRY_DIR
 from mlflow.exceptions import MlflowException
 from mlflow.prompt.registry_utils import (
     add_prompt_filter_string,
@@ -113,9 +113,10 @@ class FileModelVersion(ModelVersion):
 
     def to_mlflow_entity(self):
         meta = dict(self)
-        return ModelVersion.from_dictionary(
-            {**meta, "tags": [ModelVersionTag(k, v) for k, v in meta["tags"].items()]}
-        )
+        return ModelVersion.from_dictionary({
+            **meta,
+            "tags": [ModelVersionTag(k, v) for k, v in meta["tags"].items()],
+        })
 
 
 class FileStore(AbstractStore):
@@ -132,6 +133,18 @@ class FileStore(AbstractStore):
         """
 
         super().__init__()
+        if not MLFLOW_ALLOW_FILE_STORE.get():
+            raise MlflowException(
+                "The filesystem model registry backend (e.g., './mlruns') is in maintenance "
+                "mode and will not receive further updates. Please migrate "
+                "to a database backend (e.g., 'sqlite:///mlflow.db') to access the latest "
+                "MLflow features. The `mlflow migrate-filestore` tool migrates your existing "
+                "data losslessly. See "
+                "https://mlflow.org/docs/latest/self-hosting/migrate-from-file-store "
+                "for migration guidance. If the filesystem backend is required for your "
+                "workflow, set `MLFLOW_ALLOW_FILE_STORE=true` to opt out of this exception.",
+                error_code=INVALID_PARAMETER_VALUE,
+            )
         self.root_directory = local_file_uri_to_path(root_directory or _default_root_dir())
         # Create models directory if needed
         if not exists(self.models_directory):
@@ -356,10 +369,7 @@ class FileStore(AbstractStore):
 
     def _list_all_registered_models(self):
         registered_model_paths = self._get_all_registered_model_paths()
-        registered_models = []
-        for path in registered_model_paths:
-            registered_models.append(self._get_registered_model_from_path(path))
-        return registered_models
+        return [self._get_registered_model_from_path(path) for path in registered_model_paths]
 
     def search_registered_models(
         self, filter_string=None, max_results=None, order_by=None, page_token=None
@@ -504,19 +514,19 @@ class FileStore(AbstractStore):
 
     def get_all_registered_model_tags_from_path(self, model_path):
         parent_path, tag_files = self._get_resource_files(model_path, FileStore.TAGS_FOLDER_NAME)
-        tags = []
-        for tag_file in tag_files:
-            tags.append(self._get_registered_model_tag_from_file(parent_path, tag_file))
-        return tags
+        return [
+            self._get_registered_model_tag_from_file(parent_path, tag_file)
+            for tag_file in tag_files
+        ]
 
     def get_all_registered_model_aliases_from_path(self, model_path):
         parent_path, alias_files = self._get_resource_files(
             model_path, FileStore.REGISTERED_MODELS_ALIASES_FOLDER_NAME
         )
-        aliases = []
-        for alias_file in alias_files:
-            aliases.append(self._get_registered_model_alias_from_file(parent_path, alias_file))
-        return aliases
+        return [
+            self._get_registered_model_alias_from_file(parent_path, alias_file)
+            for alias_file in alias_files
+        ]
 
     def _writeable_value(self, tag_value):
         if tag_value is None:
@@ -570,10 +580,10 @@ class FileStore(AbstractStore):
 
     def _get_model_version_tags_from_dir(self, directory) -> list[ModelVersionTag]:
         parent_path, tag_files = self._get_resource_files(directory, FileStore.TAGS_FOLDER_NAME)
-        tags = []
-        for tag_file in tag_files:
-            tags.append(self._get_registered_model_version_tag_from_file(parent_path, tag_file))
-        return tags
+        return [
+            self._get_registered_model_version_tag_from_file(parent_path, tag_file)
+            for tag_file in tag_files
+        ]
 
     def _get_model_version_dir(self, name, version):
         registered_model_path = self._get_registered_model_path(name)
@@ -670,8 +680,7 @@ class FileStore(AbstractStore):
 
         def next_version(registered_model_name):
             path = self._get_registered_model_path(registered_model_name)
-            model_versions = self._list_file_model_versions_under_path(path)
-            if model_versions:
+            if model_versions := self._list_file_model_versions_under_path(path):
                 return max(mv.version for mv in model_versions) + 1
             else:
                 return 1
@@ -837,7 +846,7 @@ class FileStore(AbstractStore):
 
     def _fetch_file_model_version_if_exists(self, name, version) -> FileModelVersion:
         _validate_model_name(name)
-        _validate_model_version(version)
+        version = _validate_model_version(version)
         registered_model_version_dir = self._get_model_version_dir(name, version)
         if not exists(registered_model_version_dir):
             raise MlflowException(
@@ -886,16 +895,16 @@ class FileStore(AbstractStore):
         return list_subdirs(join(self.root_directory, FileStore.MODELS_FOLDER_NAME), full_path=True)
 
     def _list_file_model_versions_under_path(self, path) -> list[FileModelVersion]:
-        model_versions = []
         model_version_dirs = list_all(
             path,
-            filter_func=lambda x: os.path.isdir(x)
-            and os.path.basename(os.path.normpath(x)).startswith("version-"),
+            filter_func=lambda x: (
+                os.path.isdir(x) and os.path.basename(os.path.normpath(x)).startswith("version-")
+            ),
             full_path=True,
         )
-        for directory in model_version_dirs:
-            model_versions.append(self._get_file_model_version_from_dir(directory))
-        return model_versions
+        return [
+            self._get_file_model_version_from_dir(directory) for directory in model_version_dirs
+        ]
 
     def search_model_versions(
         self, filter_string=None, max_results=None, order_by=None, page_token=None

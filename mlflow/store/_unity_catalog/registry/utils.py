@@ -6,7 +6,7 @@ import json
 
 from mlflow.entities.model_registry.prompt import Prompt
 from mlflow.entities.model_registry.prompt_version import PromptVersion
-from mlflow.prompt.constants import RESPONSE_FORMAT_TAG_KEY
+from mlflow.prompt.constants import PROMPT_MODEL_CONFIG_TAG_KEY, RESPONSE_FORMAT_TAG_KEY
 from mlflow.protos.unity_catalog_prompt_messages_pb2 import (
     PromptAlias as ProtoPromptAlias,
 )
@@ -80,6 +80,11 @@ def proto_to_mlflow_prompt(
     else:
         response_format = None
 
+    if PROMPT_MODEL_CONFIG_TAG_KEY in version_tags:
+        model_config = json.loads(version_tags[PROMPT_MODEL_CONFIG_TAG_KEY])
+    else:
+        model_config = None
+
     version_tags = {
         key: value for key, value in version_tags.items() if not key.startswith("_mlflow")
     }
@@ -102,6 +107,7 @@ def proto_to_mlflow_prompt(
         tags=version_tags,
         aliases=aliases,
         response_format=response_format,
+        model_config=model_config,
     )
 
 
@@ -129,3 +135,24 @@ def mlflow_prompt_to_proto(prompt: PromptVersion) -> ProtoPromptVersion:
             proto_version.aliases.append(alias_proto)
 
     return proto_version
+
+
+def get_uc_model_registry_store_class():
+    """Return the UC model-registry store class to use for the ``databricks-uc`` scheme:
+    ``UcNativeModelRegistryStore`` when ``MLFLOW_ENABLE_UC_NATIVE_MODEL_REGISTRY`` is enabled,
+    otherwise the legacy ``UcModelRegistryStore``.
+
+    The store classes are imported lazily because they import from this module.
+    """
+    from mlflow.environment_variables import MLFLOW_ENABLE_UC_NATIVE_MODEL_REGISTRY
+
+    if MLFLOW_ENABLE_UC_NATIVE_MODEL_REGISTRY.get():
+        from mlflow.store._unity_catalog.registry.uc_native_rest_store import (
+            UcNativeModelRegistryStore,
+        )
+
+        return UcNativeModelRegistryStore
+
+    from mlflow.store._unity_catalog.registry.rest_store import UcModelRegistryStore
+
+    return UcModelRegistryStore

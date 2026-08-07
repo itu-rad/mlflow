@@ -8,16 +8,16 @@ import json
 import logging
 from typing import Any
 
-from mlflow.entities.trace import Trace
+import mlflow
+from mlflow.entities import SpanType, Trace
+from mlflow.environment_variables import MLFLOW_GENAI_EVAL_ENABLE_SCORER_TRACING
 from mlflow.exceptions import MlflowException
 from mlflow.genai.judges.tools.base import JudgeTool
 from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
-from mlflow.utils.annotations import experimental
 
 _logger = logging.getLogger(__name__)
 
 
-@experimental(version="3.4.0")
 class JudgeToolRegistry:
     """Registry for managing and invoking JudgeTool instances."""
 
@@ -51,7 +51,8 @@ class JudgeToolRegistry:
 
         if function_name not in self._tools:
             raise MlflowException(
-                f"Tool '{function_name}' not found in registry", error_code=RESOURCE_DOES_NOT_EXIST
+                f"Tool '{function_name}' not found in registry",
+                error_code=RESOURCE_DOES_NOT_EXIST,
             )
         tool = self._tools[function_name]
 
@@ -65,7 +66,11 @@ class JudgeToolRegistry:
 
         _logger.debug(f"Invoking tool '{function_name}' with args: {arguments}")
         try:
-            result = tool.invoke(trace, **arguments)
+            if MLFLOW_GENAI_EVAL_ENABLE_SCORER_TRACING.get():
+                tool_func = mlflow.trace(name=tool.name, span_type=SpanType.TOOL)(tool.invoke)
+            else:
+                tool_func = tool.invoke
+            result = tool_func(trace, **arguments)
             _logger.debug(f"Tool '{function_name}' returned: {result}")
             return result
         except TypeError as e:
@@ -87,7 +92,6 @@ class JudgeToolRegistry:
 _judge_tool_registry = JudgeToolRegistry()
 
 
-@experimental(version="3.4.0")
 def register_judge_tool(tool: JudgeTool) -> None:
     """
     Register a judge tool in the global registry.
@@ -98,7 +102,6 @@ def register_judge_tool(tool: JudgeTool) -> None:
     _judge_tool_registry.register(tool)
 
 
-@experimental(version="3.4.0")
 def invoke_judge_tool(tool_call: Any, trace: Trace) -> Any:
     """
     Invoke a judge tool using a ToolCall instance and trace.
@@ -113,7 +116,6 @@ def invoke_judge_tool(tool_call: Any, trace: Trace) -> Any:
     return _judge_tool_registry.invoke(tool_call, trace)
 
 
-@experimental(version="3.4.0")
 def list_judge_tools() -> list[JudgeTool]:
     """
     List all registered judge tools.
@@ -128,6 +130,7 @@ def list_judge_tools() -> list[JudgeTool]:
 # the registry is fully defined before tools attempt to register themselves.
 from mlflow.genai.judges.tools.get_root_span import GetRootSpanTool
 from mlflow.genai.judges.tools.get_span import GetSpanTool
+from mlflow.genai.judges.tools.get_span_image import GetSpanImageTool
 from mlflow.genai.judges.tools.get_span_performance_and_timing_report import (
     GetSpanPerformanceAndTimingReportTool,
 )
@@ -138,6 +141,7 @@ from mlflow.genai.judges.tools.search_trace_regex import SearchTraceRegexTool
 _judge_tool_registry.register(GetTraceInfoTool())
 _judge_tool_registry.register(GetRootSpanTool())
 _judge_tool_registry.register(GetSpanTool())
+_judge_tool_registry.register(GetSpanImageTool())
 _judge_tool_registry.register(ListSpansTool())
 _judge_tool_registry.register(SearchTraceRegexTool())
 _judge_tool_registry.register(GetSpanPerformanceAndTimingReportTool())

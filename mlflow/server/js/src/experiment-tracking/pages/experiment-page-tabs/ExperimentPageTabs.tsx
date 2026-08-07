@@ -1,57 +1,49 @@
-import React, { useEffect } from 'react';
-import { Button, PageWrapper, Spacer, ParagraphSkeleton, useDesignSystemTheme } from '@databricks/design-system';
+import React, { useEffect, useMemo } from 'react';
+import { Button, PageWrapper, ParagraphSkeleton, useDesignSystemTheme } from '@databricks/design-system';
 import { PredefinedError } from '@databricks/web-shared/errors';
 import invariant from 'invariant';
-import { useNavigate, useParams, Outlet, matchPath, useLocation } from '../../../common/utils/RoutingUtils';
+import { useNavigate, useParams, Outlet, useLocation, matchPath } from '../../../common/utils/RoutingUtils';
 import { useGetExperimentQuery } from '../../hooks/useExperimentQuery';
 import { useExperimentReduxStoreCompat } from '../../hooks/useExperimentReduxStoreCompat';
 import { ExperimentPageHeaderWithDescription } from '../../components/experiment-page/components/ExperimentPageHeaderWithDescription';
 import { coerceToEnum } from '@databricks/web-shared/utils';
-import { ExperimentKind, ExperimentPageTabName } from '../../constants';
+import { ExperimentKind, ExperimentPageTabName, MLFLOW_EXPERIMENT_TRACE_STORAGE_UC_SCHEMA_TAG } from '../../constants';
 import {
-  shouldEnableExperimentKindInference,
-  shouldEnableExperimentPageChildRoutes,
+  shouldEnableExperimentOverviewTab,
+  shouldEnableWorkflowBasedNavigation,
 } from '@mlflow/mlflow/src/common/utils/FeatureUtils';
+import {
+  createTraceLocationForDestinationPath,
+  createTraceLocationForExperiment,
+  isV4TraceLocation,
+  shouldUseTracesV4API,
+} from '@databricks/web-shared/genai-traces-table';
+import { useIsFileStore } from '../../hooks/useServerInfo';
 import { useUpdateExperimentKind } from '../../components/experiment-page/hooks/useUpdateExperimentKind';
 import { ExperimentViewHeaderKindSelector } from '../../components/experiment-page/components/header/ExperimentViewHeaderKindSelector';
-import { getExperimentKindFromTags } from '../../utils/ExperimentKindUtils';
+import { useExperimentKind } from '../../utils/ExperimentKindUtils';
 import { useInferExperimentKind } from '../../components/experiment-page/hooks/useInferExperimentKind';
 import { ExperimentViewInferredKindModal } from '../../components/experiment-page/components/header/ExperimentViewInferredKindModal';
 import Routes, { RoutePaths } from '../../routes';
-import { EvaluationSubTabSelector } from './EvaluationSubTabSelector';
-import { LabelingSubTabSelector } from './LabelingSubTabSelector';
 import { useGetExperimentPageActiveTabByRoute } from '../../components/experiment-page/hooks/useGetExperimentPageActiveTabByRoute';
 import { useNavigateToExperimentPageTab } from '../../components/experiment-page/hooks/useNavigateToExperimentPageTab';
 
-const ExperimentRunsPage = React.lazy(() => import('../experiment-runs/ExperimentRunsPage'));
-const ExperimentTracesPage = React.lazy(() => import('../experiment-traces/ExperimentTracesPage'));
-
-const ExperimentLoggedModelListPage = React.lazy(
-  () => import('../experiment-logged-models/ExperimentLoggedModelListPage'),
-);
-
-const ExperimentEvaluationRunsPage = React.lazy(
-  () => import('../experiment-evaluation-runs/ExperimentEvaluationRunsPage'),
-);
-
-const ExperimentEvaluationDatasetsPage = React.lazy(
-  () => import('../experiment-evaluation-datasets/ExperimentEvaluationDatasetsPage'),
-);
+import { ExperimentPageSideNav, ExperimentPageSideNavSkeleton } from './side-nav/ExperimentPageSideNav';
+import { HeaderVisibilityProvider, useHeaderVisibility } from './ExperimentPageHeaderVisibilityContext';
+import { ExperimentViewSavedViewsButton } from '../../components/experiment-page/components/header/ExperimentViewSavedViewsButton';
+import { SharedViewActionsBridgeProvider } from '../../components/experiment-page/hooks/useSharedViewActionsBridge';
+import type { ExperimentEntity } from '../../types';
 
 const ExperimentPageTabsImpl = () => {
   const { experimentId, tabName } = useParams();
   const { theme } = useDesignSystemTheme();
   const navigate = useNavigate();
+  const isFileStore = useIsFileStore();
 
   const { tabName: activeTabByRoute } = useGetExperimentPageActiveTabByRoute();
   const activeTab = activeTabByRoute ?? coerceToEnum(ExperimentPageTabName, tabName, ExperimentPageTabName.Models);
 
   invariant(experimentId, 'Experiment ID must be defined');
-  if (!shouldEnableExperimentPageChildRoutes()) {
-    // When child routes mode are not enabled, we expect the `tabName` to be defined.
-    // Otherwise, this component is just an outlet for the experiment page child routes.
-    invariant(tabName, 'Tab name must be defined');
-  }
 
   const {
     data: experiment,
@@ -71,6 +63,8 @@ const ExperimentPageTabsImpl = () => {
   // Put the experiment in the redux store so that the logged models page can transition smoothly
   useExperimentReduxStoreCompat(experiment);
 
+  const { headerHidden } = useHeaderVisibility();
+
   // For showstopper experiment fetch errors, we want it to hit the error boundary
   // so that the user can see the error message
   if (experimentError instanceof PredefinedError) {
@@ -80,7 +74,27 @@ const ExperimentPageTabsImpl = () => {
   const experimentTags = experiment && 'tags' in experiment ? experiment?.tags : [];
   const canUpdateExperimentKind = true;
 
-  const experimentKind = getExperimentKindFromTags(experimentTags);
+  const experimentKind = useExperimentKind(experimentTags);
+  const destinationPath = experimentTags?.find(
+    (tag) => tag.key === MLFLOW_EXPERIMENT_TRACE_STORAGE_UC_SCHEMA_TAG,
+  )?.value;
+  const traceSearchLocations = useMemo(() => {
+    if (!experimentId) {
+      return [];
+    }
+
+    // Resolve experiment-level destination path in one place and pass it through
+    // SqlWarehouseContext so trace consumers don't need to re-run flag/tag logic.
+    if (destinationPath && shouldUseTracesV4API()) {
+      return [createTraceLocationForDestinationPath(destinationPath)];
+    }
+
+    return [createTraceLocationForExperiment(experimentId)];
+  }, [destinationPath, experimentId]);
+  const hasV4Location = traceSearchLocations.some(isV4TraceLocation);
+  // We won't try to infer the experiment kind if it's already set, but we also wait for experiment to load
+  const isExperimentKindInferenceEnabled = Boolean(experiment && !experimentKind);
+  const enableWorkflowBasedNavigation = shouldEnableWorkflowBasedNavigation();
 
   const {
     inferredExperimentKind,
@@ -90,17 +104,21 @@ const ExperimentPageTabsImpl = () => {
   } = useInferExperimentKind({
     experimentId,
     isLoadingExperiment: loadingExperiment,
-    enabled: shouldEnableExperimentKindInference() && !experimentKind,
+    enabled: isExperimentKindInferenceEnabled,
     experimentTags,
     updateExperimentKind,
+    hasV4Location,
   });
 
   // Check if the user landed on the experiment page without a specific tab (sub-route)...
   const { pathname } = useLocation();
+  // With query param-based workspace routing, pathname no longer contains workspace prefix
   const matchedExperimentPageWithoutTab = Boolean(matchPath(RoutePaths.experimentPage, pathname));
-  // ...if true, we want to navigate to the appropriate tab based on the experiment kind
+  // ...if true, we want to navigate to the appropriate tab based on the experiment kind.
+  // However, if experiment kind inference is enabled (no kind tag exists), we should
+  // let the inference process handle navigation instead to avoid race conditions.
   useNavigateToExperimentPageTab({
-    enabled: shouldEnableExperimentPageChildRoutes() && matchedExperimentPageWithoutTab,
+    enabled: matchedExperimentPageWithoutTab && !isExperimentKindInferenceEnabled,
     experimentId,
   });
 
@@ -117,9 +135,9 @@ const ExperimentPageTabsImpl = () => {
   }, [experimentId, inferredExperimentPageTab]);
 
   if (
+    !enableWorkflowBasedNavigation &&
     inferredExperimentKind === ExperimentKind.NO_INFERRED_TYPE &&
-    canUpdateExperimentKind &&
-    shouldEnableExperimentKindInference()
+    canUpdateExperimentKind
   ) {
     return (
       <ExperimentViewInferredKindModal
@@ -129,9 +147,14 @@ const ExperimentPageTabsImpl = () => {
             {
               onSettled: () => {
                 dismiss();
-                if (shouldEnableExperimentPageChildRoutes() && kind === ExperimentKind.GENAI_DEVELOPMENT) {
-                  // If the experiment kind is GENAI_DEVELOPMENT, we want to navigate to the Traces tab
-                  navigate(Routes.getExperimentPageTabRoute(experimentId, ExperimentPageTabName.Traces), {
+                if (kind === ExperimentKind.GENAI_DEVELOPMENT) {
+                  // If the experiment kind is GENAI_DEVELOPMENT, navigate to Overview tab if enabled
+                  // and not using FileStore backend, otherwise Traces
+                  const targetTab =
+                    shouldEnableExperimentOverviewTab(hasV4Location) && isFileStore === false
+                      ? ExperimentPageTabName.Overview
+                      : ExperimentPageTabName.Traces;
+                  navigate(Routes.getExperimentPageTabRoute(experimentId, targetTab), {
                     replace: true,
                   });
                 }
@@ -144,60 +167,82 @@ const ExperimentPageTabsImpl = () => {
     );
   }
 
-  return (
-    <>
-      <ExperimentPageHeaderWithDescription
-        experiment={experiment}
-        loading={loadingExperiment || inferringExperimentType}
-        onNoteUpdated={refetchExperiment}
-        error={experimentError}
-        inferredExperimentKind={inferredExperimentKind}
-        refetchExperiment={refetchExperiment}
-        experimentKindSelector={
-          <ExperimentViewHeaderKindSelector
-            value={experimentKind}
-            inferredExperimentKind={inferredExperimentKind}
-            onChange={(kind) => updateExperimentKind({ experimentId, kind })}
-            isUpdating={updatingExperimentKind || inferringExperimentType}
-            key={inferredExperimentKind}
-            readOnly={!canUpdateExperimentKind}
-          />
-        }
-      />
-      {activeTab === ExperimentPageTabName.EvaluationRuns || activeTab === ExperimentPageTabName.Datasets ? (
-        <EvaluationSubTabSelector experimentId={experimentId} activeTab={activeTab} />
-      ) : activeTab === ExperimentPageTabName.LabelingSessions ||
-        activeTab === ExperimentPageTabName.LabelingSchemas ? (
-        <LabelingSubTabSelector experimentId={experimentId} activeTab={activeTab} />
-      ) : (
+  const outletComponent = (
+    <React.Suspense
+      fallback={
         <>
-          <Spacer size="sm" shrinks={false} />
-          <div css={{ width: '100%', borderTop: `1px solid ${theme.colors.border}` }} />
+          {[...Array(8).keys()].map((i) => (
+            <ParagraphSkeleton label="Loading..." key={i} seed={`s-${i}`} />
+          ))}
         </>
+      }
+    >
+      <Outlet />
+    </React.Suspense>
+  );
+
+  const contentWrapperCss = {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    padding: theme.spacing.sm,
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  };
+
+  // Saved-views controls live in the header (the page-level action cluster) rather than the runs
+  // toolbar, since a view is a container over the toolbar's column/filter/sort selectors. The Views
+  // dropdown reads saved-view tags and the active-view URL param only, and the Save modal
+  // reconstructs the current view from its localStorage persistKey — so no live uiState needs to be
+  // plumbed up here. Sharing lives inside the Views dropdown's "Save & share current view…" entry
+  // rather than a separate button. Runs-only for now; traces parity fills the same slot separately.
+  const headerSavedViewsSlot =
+    activeTab === ExperimentPageTabName.Runs && experiment ? (
+      <ExperimentViewSavedViewsButton experiment={experiment as unknown as ExperimentEntity} />
+    ) : undefined;
+
+  return (
+    // Bridges the runs shared-view Override/Discard actions (published from ExperimentView, rendered
+    // via the outlet below) up to the header Views dropdown, which lives above the outlet.
+    <SharedViewActionsBridgeProvider>
+      {!headerHidden && (
+        <ExperimentPageHeaderWithDescription
+          experiment={experiment}
+          loading={loadingExperiment || inferringExperimentType}
+          onNoteUpdated={refetchExperiment}
+          error={experimentError}
+          inferredExperimentKind={inferredExperimentKind}
+          savedViewsSlot={headerSavedViewsSlot}
+          experimentKindSelector={
+            !enableWorkflowBasedNavigation ? (
+              <ExperimentViewHeaderKindSelector
+                value={experimentKind}
+                inferredExperimentKind={inferredExperimentKind}
+                onChange={(kind) => updateExperimentKind({ experimentId, kind })}
+                isUpdating={updatingExperimentKind || inferringExperimentType}
+                key={inferredExperimentKind}
+                readOnly={!canUpdateExperimentKind}
+              />
+            ) : null
+          }
+        />
       )}
-      <Spacer size="sm" shrinks={false} />
-      <React.Suspense
-        fallback={
-          <>
-            {[...Array(8).keys()].map((i) => (
-              <ParagraphSkeleton label="Loading..." key={i} seed={`s-${i}`} />
-            ))}
-          </>
-        }
-      >
-        {shouldEnableExperimentPageChildRoutes() ? (
-          <Outlet />
-        ) : (
-          <>
-            {activeTab === ExperimentPageTabName.Traces && <ExperimentTracesPage />}
-            {activeTab === ExperimentPageTabName.Runs && <ExperimentRunsPage />}
-            {activeTab === ExperimentPageTabName.Models && <ExperimentLoggedModelListPage />}
-            {activeTab === ExperimentPageTabName.EvaluationRuns && <ExperimentEvaluationRunsPage />}
-            {activeTab === ExperimentPageTabName.Datasets && <ExperimentEvaluationDatasetsPage />}
-          </>
-        )}
-      </React.Suspense>
-    </>
+      {!enableWorkflowBasedNavigation ? (
+        <div css={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0 }}>
+          {loadingExperiment || inferringExperimentType ? (
+            <ExperimentPageSideNavSkeleton />
+          ) : (
+            <ExperimentPageSideNav
+              experimentKind={experimentKind ?? inferredExperimentKind ?? ExperimentKind.CUSTOM_MODEL_DEVELOPMENT}
+              activeTab={activeTab}
+            />
+          )}
+          <div css={contentWrapperCss}>{outletComponent}</div>
+        </div>
+      ) : (
+        <div css={contentWrapperCss}>{outletComponent}</div>
+      )}
+    </SharedViewActionsBridgeProvider>
   );
 };
 
@@ -205,18 +250,20 @@ const ExperimentPageTabs = () => {
   const { theme } = useDesignSystemTheme();
 
   return (
-    <div
-      css={{
-        flex: 1,
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: theme.spacing.md,
-        height: '100%',
-      }}
-    >
-      <ExperimentPageTabsImpl />
-    </div>
+    <HeaderVisibilityProvider>
+      <div
+        css={{
+          flex: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: theme.spacing.md,
+          height: '100%',
+        }}
+      >
+        <ExperimentPageTabsImpl />
+      </div>
+    </HeaderVisibilityProvider>
   );
 };
 

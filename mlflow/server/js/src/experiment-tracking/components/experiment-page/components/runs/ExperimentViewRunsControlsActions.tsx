@@ -3,7 +3,7 @@ import type { Theme } from '@emotion/react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FormattedMessage } from 'react-intl';
 import { useNavigate } from '../../../../../common/utils/RoutingUtils';
-import { LegacyTooltip } from '@databricks/design-system';
+import { Tooltip } from '@databricks/design-system';
 import { LIFECYCLE_FILTER } from '../../../../constants';
 import Routes from '../../../../routes';
 import type { ExperimentPageViewState } from '../../models/ExperimentPageViewState';
@@ -13,6 +13,7 @@ import type { ExperimentPageSearchFacetsState } from '../../models/ExperimentPag
 import type { RunInfoEntity } from '../../../../types';
 import { useDesignSystemTheme } from '@databricks/design-system';
 import { ExperimentViewRunsControlsActionsSelectTags } from './ExperimentViewRunsControlsActionsSelectTags';
+import { useRegisterSelectedIds } from '@mlflow/mlflow/src/assistant';
 
 export type ExperimentViewRunsControlsActionsProps = {
   viewState: ExperimentPageViewState;
@@ -24,6 +25,7 @@ export type ExperimentViewRunsControlsActionsProps = {
 const CompareRunsButtonWrapper: React.FC<React.PropsWithChildren<unknown>> = ({ children }) => <>{children}</>;
 
 export const ExperimentViewRunsControlsActions = React.memo(
+  // eslint-disable-next-line react-component-name/react-component-name -- TODO(FEINF-4716)
   ({ viewState, runsData, searchFacetsState, refreshRuns }: ExperimentViewRunsControlsActionsProps) => {
     const { runsSelected } = viewState;
     const { runInfos, tagsList } = runsData;
@@ -31,6 +33,9 @@ export const ExperimentViewRunsControlsActions = React.memo(
 
     const navigate = useNavigate();
     const { theme } = useDesignSystemTheme();
+
+    // Register selected runs with the Assistant context
+    useRegisterSelectedIds('selectedRunIds', runsSelected);
 
     const [showDeleteRunModal, setShowDeleteRunModal] = useState(false);
     const [showRestoreRunModal, setShowRestoreRunModal] = useState(false);
@@ -56,9 +61,8 @@ export const ExperimentViewRunsControlsActions = React.memo(
     }, [navigate, runInfos, runsSelected]);
 
     const analyzeButtonClicked = useCallback(() => {
-      const runsSelectedList = Object.keys(runsSelected);
-      navigate(Routes.getAnalyzeRunPageRoute(runsSelectedList));
-    }, [navigate, runInfos, runsSelected]);
+      navigate(Routes.getAnalyzeRunPageRoute(Object.keys(runsSelected)));
+    }, [navigate, runsSelected]);
 
     const onDeleteRun = useCallback(() => setShowDeleteRunModal(true), []);
     const onRestoreRun = useCallback(() => setShowRestoreRunModal(true), []);
@@ -68,9 +72,9 @@ export const ExperimentViewRunsControlsActions = React.memo(
 
     const selectedRunsCount = Object.values(viewState.runsSelected).filter(Boolean).length;
     const canRestoreRuns = selectedRunsCount > 0;
-    const canAnalyzeRuns = selectedRunsCount > 0;
     const canRenameRuns = selectedRunsCount === 1;
     const canCompareRuns = selectedRunsCount > 1;
+    const canAnalyzeRuns = selectedRunsCount > 0;
     const showActionButtons = canCompareRuns || canRenameRuns || canRestoreRuns || canAnalyzeRuns;
 
     return (
@@ -87,17 +91,6 @@ export const ExperimentViewRunsControlsActions = React.memo(
               description="Label for the rename run button above the experiment runs table"
             />
           </Button>
-          <Button
-            componentId="codegen_mlflow_app_src_experiment-tracking_components_experiment-page_components_runs_experimentviewrunscontrolsactions.tsx_110"
-            data-testid="run-analyze-button"
-            onClick={analyzeButtonClicked}
-            disabled={!canAnalyzeRuns}
-          >
-            <FormattedMessage
-              defaultMessage="radT Analyze"
-              description="Label for the rename run button above the experiment runs table"
-            />
-          </Button>
           {lifecycleFilter === LIFECYCLE_FILTER.ACTIVE ? (
             <Button
               componentId="codegen_mlflow_app_src_experiment-tracking_components_experiment-page_components_runs_experimentviewrunscontrolsactions.tsx_117"
@@ -108,7 +101,6 @@ export const ExperimentViewRunsControlsActions = React.memo(
             >
               <FormattedMessage
                 defaultMessage="Delete"
-                // eslint-disable-next-line max-len
                 description="String for the delete button to delete a particular experiment run"
               />
             </Button>
@@ -122,7 +114,6 @@ export const ExperimentViewRunsControlsActions = React.memo(
             >
               <FormattedMessage
                 defaultMessage="Restore"
-                // eslint-disable-next-line max-len
                 description="String for the restore button to undo the experiments that were deleted"
               />
             </Button>
@@ -137,11 +128,21 @@ export const ExperimentViewRunsControlsActions = React.memo(
             >
               <FormattedMessage
                 defaultMessage="Compare"
-                // eslint-disable-next-line max-len
                 description="String for the compare button to compare experiment runs to find an ideal model"
               />
             </Button>
           </CompareRunsButtonWrapper>
+          <Button
+            componentId="mlflow.experiment_page.runs_controls.radt_analyze_button"
+            data-testid="runs-analyze-button"
+            disabled={!canAnalyzeRuns}
+            onClick={analyzeButtonClicked}
+          >
+            <FormattedMessage
+              defaultMessage="radT Analyze"
+              description="Label for the button that opens the selected runs in the radT analysis page"
+            />
+          </Button>
 
           <div css={styles.buttonSeparator} />
           <ExperimentViewRunsControlsActionsSelectTags

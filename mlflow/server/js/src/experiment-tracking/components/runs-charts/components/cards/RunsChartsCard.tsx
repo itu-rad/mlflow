@@ -28,7 +28,8 @@ import { RunsChartsImageChartCard } from './RunsChartsImageChartCard';
 import type { RunsChartsGlobalLineChartConfig } from '../../../experiment-page/models/ExperimentPageUIState';
 
 export interface RunsChartsCardProps
-  extends RunsChartCardReorderProps,
+  extends
+    RunsChartCardReorderProps,
     RunsChartCardFullScreenProps,
     RunsChartCardVisibilityProps,
     RunsChartCardSizeProps {
@@ -43,6 +44,7 @@ export interface RunsChartsCardProps
   hideEmptyCharts?: boolean;
   groupBy: RunsGroupByConfig | null;
   globalLineChartConfig?: RunsChartsGlobalLineChartConfig;
+  useMetricDisplayName?: boolean;
 }
 
 const RunsChartsCardRaw = ({
@@ -71,6 +73,7 @@ const RunsChartsCardRaw = ({
   height,
   isInViewport,
   isInViewportDeferred,
+  useMetricDisplayName,
 }: RunsChartsCardProps) => {
   const reorderProps = useMemo(
     () => ({
@@ -168,6 +171,7 @@ const RunsChartsCardRaw = ({
       <RunsChartsBarChartCard
         config={cardConfig as RunsChartsBarCardConfig}
         chartRunData={slicedRuns}
+        useMetricDisplayName={useMetricDisplayName}
         {...commonChartProps}
       />
     );
@@ -179,6 +183,7 @@ const RunsChartsCardRaw = ({
         onDownloadFullMetricHistoryCsv={onDownloadFullMetricHistoryCsv}
         globalLineChartConfig={globalLineChartConfig}
         positionInSection={index}
+        useMetricDisplayName={useMetricDisplayName}
         {...commonChartProps}
       />
     );

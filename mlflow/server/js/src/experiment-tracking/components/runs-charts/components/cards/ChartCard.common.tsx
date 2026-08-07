@@ -69,6 +69,7 @@ export interface ChartCardToggleProps {
 
 export interface ChartCardWrapperProps extends RunsChartCardReorderProps, RunsChartCardSizeProps {
   title: React.ReactNode;
+  titleTooltip?: string;
   subtitle?: React.ReactNode;
   onEdit: () => void;
   onDelete: () => void;
@@ -90,6 +91,7 @@ export interface ChartCardWrapperProps extends RunsChartCardReorderProps, RunsCh
  */
 const RunsChartCardWrapperRaw = ({
   title,
+  titleTooltip,
   subtitle,
   onDelete,
   onEdit,
@@ -178,7 +180,7 @@ const RunsChartCardWrapperRaw = ({
         ) : (
           <div css={{ overflow: 'hidden', flex: 1, flexShrink: 1 }}>
             <Typography.Title
-              title={String(title)}
+              title={titleTooltip ?? String(title)}
               level={4}
               withoutMargins
               css={{
@@ -380,6 +382,7 @@ export const RunsChartCardLoadingPlaceholder = forwardRef<
     className?: string;
     style?: React.CSSProperties;
   }
+  // eslint-disable-next-line react-component-name/react-component-name -- TODO(FEINF-4716)
 >(({ className, style }, ref) => (
   <div
     css={{ display: 'flex', height: '100%', justifyContent: 'center', alignItems: 'center' }}

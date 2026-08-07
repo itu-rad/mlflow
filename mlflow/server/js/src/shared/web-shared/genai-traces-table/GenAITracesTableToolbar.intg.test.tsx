@@ -1,30 +1,44 @@
+import { jest, describe, beforeEach, afterEach, it, expect } from '@jest/globals';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 
 import { DesignSystemProvider } from '@databricks/design-system';
 import { IntlProvider } from '@databricks/i18n';
-import { getUser } from '@databricks/web-shared/global-settings';
-import { QueryClient, QueryClientProvider } from '@databricks/web-shared/query-client';
+import { getUser } from '../global-settings/getUser';
+import { QueryClient, QueryClientProvider } from '../query-client/queryClient';
 
 import { GenAITracesTableToolbar } from './GenAITracesTableToolbar';
-import { createTestTraceInfoV3, createTestAssessmentInfo, createTestColumns } from './index';
-import type { TraceInfoV3, TableFilter, EvaluationsOverviewTableSort, TraceActions } from './types';
+import {
+  createTestTraceInfoV3,
+  createTestAssessmentInfo,
+  createTestColumns,
+} from './test-fixtures/EvaluatedTraceTestUtils';
+import type { TableFilter, EvaluationsOverviewTableSort, TraceActions } from './types';
 import { TracesTableColumnType, TracesTableColumnGroup, FilterOperator } from './types';
+import type { ModelTraceInfoV3 } from '../model-trace-explorer/ModelTrace.types';
 
 // eslint-disable-next-line no-restricted-syntax -- TODO(FEINF-4392)
 jest.setTimeout(30000);
 
 // Mock necessary modules
-jest.mock('@databricks/web-shared/global-settings', () => ({
+jest.mock('../global-settings/getUser', () => ({
   getUser: jest.fn(),
 }));
 
-jest.mock('@databricks/web-shared/hooks', () => {
+jest.mock('../hooks/useLocalStorage', () => {
   return {
     getLocalStorageItemByParams: jest.fn().mockReturnValue({ hiddenColumns: undefined }),
     useLocalStorage: jest.fn().mockReturnValue([{}, jest.fn()]),
   };
 });
+
+jest.mock('./hooks/useTableSortURL', () => ({
+  useTableSortURL: () => [undefined, jest.fn()] as const,
+}));
+
+jest.mock('./hooks/useColumnsURL', () => ({
+  useColumnsURL: () => [undefined, jest.fn()] as const,
+}));
 
 const testExperimentId = 'test-experiment-id';
 
@@ -42,7 +56,7 @@ describe('GenAITracesTableToolbar - integration test', () => {
   });
 
   const renderTestComponent = (
-    traceInfos: TraceInfoV3[] = [],
+    traceInfos: ModelTraceInfoV3[] = [],
     additionalProps: Partial<ComponentProps<typeof GenAITracesTableToolbar>> = {},
   ) => {
     const defaultAssessmentInfos = [
@@ -69,13 +83,9 @@ describe('GenAITracesTableToolbar - integration test', () => {
       toggleColumns: jest.fn(),
       setSelectedColumns: jest.fn(),
       traceActions: {
-        exportToEvals: {
-          showExportTracesToDatasetsModal: false,
-          setShowExportTracesToDatasetsModal: jest.fn(),
-          renderExportTracesToDatasetsModal: jest.fn(),
-        },
+        exportToEvals: false,
         deleteTracesAction: {
-          deleteTraces: jest.fn().mockResolvedValue(undefined),
+          deleteTraces: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
         },
         editTags: {
           showEditTagsModalForTrace: jest.fn(),
@@ -217,13 +227,9 @@ describe('GenAITracesTableToolbar - integration test', () => {
 
   it('handles trace actions', async () => {
     const traceActions: TraceActions = {
-      exportToEvals: {
-        showExportTracesToDatasetsModal: false,
-        setShowExportTracesToDatasetsModal: jest.fn(),
-        renderExportTracesToDatasetsModal: jest.fn(),
-      },
+      exportToEvals: true,
       deleteTracesAction: {
-        deleteTraces: jest.fn().mockResolvedValue(undefined),
+        deleteTraces: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       },
       editTags: {
         showEditTagsModalForTrace: jest.fn(),

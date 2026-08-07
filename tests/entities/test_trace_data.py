@@ -47,12 +47,14 @@ def test_json_deserialization():
                 "start_time_unix_nano": trace.data.spans[0].start_time_ns,
                 "end_time_unix_nano": trace.data.spans[0].end_time_ns,
                 "status": {
-                    "code": "ERROR",
+                    "code": "STATUS_CODE_ERROR",
                     "message": "Exception: Error!",
                 },
                 "attributes": {
                     "mlflow.traceRequestId": json.dumps(trace.info.trace_id),
                     "mlflow.spanType": '"UNKNOWN"',
+                    # Bumped to ERROR (40) because the span recorded an exception event.
+                    "mlflow.spanLogLevel": "40",
                     "mlflow.spanFunctionName": '"predict"',
                     "mlflow.spanInputs": '{"x": 2, "y": 5}',
                 },
@@ -64,10 +66,10 @@ def test_json_deserialization():
                             "exception.message": "Error!",
                             "exception.type": "Exception",
                             "exception.stacktrace": mock.ANY,
-                            "exception.escaped": "False",
                         },
                     }
                 ],
+                "links": [],
             },
             {
                 "name": "with_ok_event",
@@ -77,12 +79,13 @@ def test_json_deserialization():
                 "start_time_unix_nano": trace.data.spans[1].start_time_ns,
                 "end_time_unix_nano": trace.data.spans[1].end_time_ns,
                 "status": {
-                    "code": "OK",
+                    "code": "STATUS_CODE_OK",
                     "message": "",
                 },
                 "attributes": {
                     "mlflow.traceRequestId": json.dumps(trace.info.trace_id),
                     "mlflow.spanType": '"UNKNOWN"',
+                    "mlflow.spanLogLevel": "10",
                 },
                 "events": [
                     {
@@ -91,6 +94,7 @@ def test_json_deserialization():
                         "attributes": {"foo": "bar"},
                     }
                 ],
+                "links": [],
             },
             {
                 "name": "always_fail_name",
@@ -100,13 +104,15 @@ def test_json_deserialization():
                 "start_time_unix_nano": trace.data.spans[2].start_time_ns,
                 "end_time_unix_nano": trace.data.spans[2].end_time_ns,
                 "status": {
-                    "code": "ERROR",
+                    "code": "STATUS_CODE_ERROR",
                     "message": "Exception: Error!",
                 },
                 "attributes": {
                     "delta": "1",
                     "mlflow.traceRequestId": json.dumps(trace.info.trace_id),
                     "mlflow.spanType": '"LLM"',
+                    # Bumped to ERROR (40) because the span recorded an exception event.
+                    "mlflow.spanLogLevel": "40",
                     "mlflow.spanFunctionName": '"always_fail"',
                     "mlflow.spanInputs": "{}",
                 },
@@ -118,10 +124,10 @@ def test_json_deserialization():
                             "exception.message": "Error!",
                             "exception.type": "Exception",
                             "exception.stacktrace": mock.ANY,
-                            "exception.escaped": "False",
                         },
                     }
                 ],
+                "links": [],
             },
         ],
     }

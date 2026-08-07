@@ -1,4 +1,4 @@
-import type { TimelineTreeNode } from './timeline-tree';
+import type { TimelineTreeNode } from './timeline-tree/TimelineTree.types';
 
 export const MLFLOW_TRACE_SCHEMA_VERSION_KEY = 'mlflow.trace_schema.version';
 
@@ -6,7 +6,7 @@ export const MLFLOW_TRACE_SCHEMA_VERSION_KEY = 'mlflow.trace_schema.version';
 export const INFERENCE_TABLE_RESPONSE_COLUMN_KEY = 'response';
 export const INFERENCE_TABLE_TRACE_COLUMN_KEY = 'trace';
 
-export type ModelTraceExplorerRenderMode = 'default' | 'json';
+export type ModelTraceExplorerRenderMode = 'default' | 'json' | 'table';
 
 export enum ModelSpanType {
   LLM = 'LLM',
@@ -21,6 +21,16 @@ export enum ModelSpanType {
   RERANKER = 'RERANKER',
   MEMORY = 'MEMORY',
   UNKNOWN = 'UNKNOWN',
+}
+
+// Numeric values mirror Python's logging module so a value sourced from
+// the `mlflow.spanLogLevel` span attribute can be compared directly.
+export enum SpanLogLevel {
+  DEBUG = 10,
+  INFO = 20,
+  WARNING = 30,
+  ERROR = 40,
+  CRITICAL = 50,
 }
 
 export enum ModelIconType {
@@ -71,6 +81,7 @@ export type ModelTraceSpanV2 = {
   outputs?: any;
   attributes?: Record<string, any>;
   events?: ModelTraceEvent[];
+  links?: ModelTraceSpanLink[];
   /* metadata for ui usage logging */
   type?: ModelSpanType;
 };
@@ -91,11 +102,48 @@ export type ModelTraceSpanV3 = {
   };
   attributes: Record<string, any>;
   events?: ModelTraceEvent[];
+  links?: ModelTraceSpanLink[];
   /* metadata for ui usage logging */
   type?: ModelSpanType;
 };
 
-export type ModelTraceSpan = ModelTraceSpanV2 | ModelTraceSpanV3;
+/**
+ * OTLP AnyValue: the typed attribute value shape returned by OTLP-based
+ * endpoints (V3 traces/get and V4 batchGet). Exactly one field is set;
+ * an empty object represents null.
+ */
+export type ModelTraceOtelAnyValue = {
+  string_value?: string;
+  // int64 values may be serialized as strings in proto3 JSON
+  int_value?: number | string;
+  bool_value?: boolean;
+  double_value?: number;
+  bytes_value?: string;
+  array_value?: { values?: ModelTraceOtelAnyValue[] };
+  kvlist_value?: { values?: Array<{ key: string; value?: ModelTraceOtelAnyValue }> };
+};
+
+export type ModelTraceSpanV4 = {
+  trace_id: string;
+  span_id: string;
+  // can be empty or null
+  parent_span_id: string | null;
+  name: string;
+  kind: string;
+  start_time_unix_nano: string;
+  end_time_unix_nano: string;
+  attributes: Array<{
+    key: string;
+    value: ModelTraceOtelAnyValue;
+  }>;
+  status: { code: ModelSpanStatusCode };
+  events?: ModelTraceEvent[];
+  links?: ModelTraceSpanLink[];
+  /* metadata for ui usage logging */
+  type?: ModelSpanType;
+};
+
+export type ModelTraceSpan = ModelTraceSpanV2 | ModelTraceSpanV3 | ModelTraceSpanV4;
 
 export type ModelTraceEvent = {
   name: string;
@@ -103,6 +151,12 @@ export type ModelTraceEvent = {
   timestamp?: number;
   time_unix_nano?: number;
   attributes?: Record<string, any>;
+};
+
+export type ModelTraceSpanLink = {
+  trace_id: string;
+  span_id: string;
+  attributes?: Record<string, any> | null;
 };
 
 export type ModelTraceData = {
@@ -170,23 +224,54 @@ export type ModelTraceLocationInferenceTable = {
   };
 };
 
-export type ModelTraceLocation = ModelTraceLocationMlflowExperiment | ModelTraceLocationInferenceTable;
+export type ModelTraceLocationUcSchema = {
+  type: 'UC_SCHEMA';
+  uc_schema: { catalog_name: string; schema_name: string };
+};
+
+export type ModelTraceLocationUcTablePrefix = {
+  type: 'UC_TABLE_PREFIX';
+  uc_table_prefix: { catalog_name: string; schema_name: string; table_prefix: string };
+};
+
+export type ModelTraceLocation =
+  | ModelTraceLocationMlflowExperiment
+  | ModelTraceLocationInferenceTable
+  | ModelTraceLocationUcSchema
+  | ModelTraceLocationUcTablePrefix;
+
+/**
+ * Subset of ModelTraceLocation used for trace search operations.
+ * Excludes INFERENCE_TABLE which is not used in search APIs.
+ */
+export type ModelTraceSearchLocation =
+  | ModelTraceLocationMlflowExperiment
+  | ModelTraceLocationUcSchema
+  | ModelTraceLocationUcTablePrefix;
 
 export type ModelTraceInfoV3 = {
   trace_id: string;
   client_request_id?: string;
   trace_location: ModelTraceLocation;
+  /**
+   * @deprecated Use `request_preview` instead
+   */
+  request?: string;
   request_preview?: string;
+  /**
+   * @deprecated Use `response_preview` instead
+   */
+  response?: string;
   response_preview?: string;
   // timestamp in a format like "2025-02-19T09:52:23.140Z"
   request_time: string;
   // formatted duration string like "32.4s"
-  execution_duration: string;
+  execution_duration?: string;
   state: ModelTraceState;
   trace_metadata?: {
     [key: string]: string;
   };
-  assessments: Assessment[];
+  assessments?: Assessment[];
   tags: {
     [key: string]: string;
   };
@@ -237,24 +322,42 @@ export type ModelTraceStatus =
   | ModelTraceStatusInProgress;
 
 /**
+ * Cost information for a span in USD.
+ */
+export interface SpanCostInfo {
+  input_cost: number;
+  output_cost: number;
+  total_cost: number;
+}
+
+/**
  * Represents a single node in the model trace tree.
  */
-export interface ModelTraceSpanNode extends TimelineTreeNode, Pick<ModelTraceSpan, 'attributes' | 'type' | 'events'> {
+export interface ModelTraceSpanNode
+  extends TimelineTreeNode, Pick<ModelTraceSpan, 'attributes' | 'type' | 'events' | 'links'> {
   assessments: Assessment[];
   inputs?: any;
   outputs?: any;
   children?: ModelTraceSpanNode[];
+  chatMessageFormat?: string;
   chatMessages?: ModelTraceChatMessage[];
   chatTools?: ModelTraceChatTool[];
   parentId?: string | null;
   traceId: string;
+  modelName?: string;
+  cost?: SpanCostInfo;
+  linkedGatewayTraceId?: string;
+  // Severity classification, sourced from `mlflow.spanLogLevel`. Spans without
+  // an explicit level have this undefined; the trace-explorer filter treats
+  // missing as DEBUG so old/unclassified spans stay visible by default.
+  logLevel?: SpanLogLevel;
 }
 
-export type ModelTraceExplorerTab = 'chat' | 'content' | 'attributes' | 'events';
+export type ModelTraceExplorerTab = 'chat' | 'content' | 'attributes' | 'events' | 'links';
 
 export type SearchMatch = {
   span: ModelTraceSpanNode;
-  section: 'inputs' | 'outputs' | 'attributes' | 'events';
+  section: 'inputs' | 'outputs' | 'attributes' | 'events' | 'links';
   key: string;
   isKeyMatch: boolean;
   matchIndex: number;
@@ -267,6 +370,10 @@ export type SpanFilterState = {
   showExceptions: boolean;
   // record of span_type: whether to show it
   spanTypeDisplayState: Record<string, boolean>;
+  // hide spans whose `mlflow.spanLogLevel` is below this threshold.
+  // Spans without an explicit level are treated as DEBUG so old/unclassified
+  // spans remain visible at the default threshold.
+  minLogLevel: SpanLogLevel;
 };
 
 export interface RetrieverDocument {
@@ -282,6 +389,7 @@ export interface RetrieverDocument {
 export enum CodeSnippetRenderMode {
   JSON = 'json',
   TEXT = 'text',
+  TABLE = 'table',
   MARKDOWN = 'markdown',
   PYTHON = 'python',
 }
@@ -301,7 +409,7 @@ type ModelTraceImageContentPart = {
   image_url: ModelTraceImageUrl;
 };
 
-type ModelTraceInputAudio = {
+export type ModelTraceInputAudio = {
   data: string;
   format: 'wav' | 'mp3';
 };
@@ -311,10 +419,20 @@ type ModelTraceAudioContentPart = {
   input_audio: ModelTraceInputAudio;
 };
 
+type ModelTraceAnthropicImageContentPart = {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+};
+
 export type ModelTraceContentParts =
   | ModelTraceTextContentPart
   | ModelTraceImageContentPart
-  | ModelTraceAudioContentPart;
+  | ModelTraceAudioContentPart
+  | ModelTraceAnthropicImageContentPart;
 
 export type ModelTraceContentType = string | ModelTraceContentParts[];
 
@@ -325,6 +443,8 @@ export type ModelTraceChatMessage = {
   content?: string | null;
   tool_calls?: ModelTraceToolCall[];
   tool_call_id?: string;
+  reasoning?: string | null;
+  audioParts?: ModelTraceInputAudio[];
 };
 
 // The actual chat message schema of mlflow contains string, null and content part list.
@@ -411,6 +531,10 @@ export interface ExpectationSerializedValue {
 
 export type Expectation = ExpectationValue | ExpectationSerializedValue;
 
+export interface AssessmentMetadata {
+  span_name?: string;
+}
+
 // should be aligned with `mlflow/api/proto/service.proto`
 export interface AssessmentBase {
   assessment_id: string;
@@ -436,6 +560,8 @@ export interface AssessmentBase {
 
   // UI only field to store the overridden assessment object for easier display
   overriddenAssessment?: Assessment;
+
+  error?: AssessmentError;
 }
 
 export interface FeedbackAssessment extends AssessmentBase {
@@ -446,4 +572,12 @@ export interface ExpectationAssessment extends AssessmentBase {
   expectation: Expectation;
 }
 
-export type Assessment = FeedbackAssessment | ExpectationAssessment;
+export interface IssueReferenceValue {
+  issue_name: string;
+}
+
+export interface IssueReferenceAssessment extends AssessmentBase {
+  issue: IssueReferenceValue;
+}
+
+export type Assessment = FeedbackAssessment | ExpectationAssessment | IssueReferenceAssessment;

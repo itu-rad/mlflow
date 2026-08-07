@@ -3,10 +3,11 @@ import { useMemo } from 'react';
 
 import type { IntlShape } from '@databricks/i18n';
 
+import type { ModelTraceInfoV3 } from '../../model-trace-explorer/ModelTrace.types';
 import { KnownEvaluationResultAssessmentName } from '../enum';
-import type { AssessmentInfo, RunEvaluationTracesDataEntry, TraceInfoV3, TracesTableColumn } from '../types';
+import type { AssessmentInfo, RunEvaluationTracesDataEntry, TracesTableColumn } from '../types';
 import { TracesTableColumnGroup, TracesTableColumnType } from '../types';
-import { shouldEnableTagGrouping } from '../utils/FeatureUtils';
+import { shouldEnableSessionGrouping, shouldEnableTagGrouping } from '../utils/FeatureUtils';
 import {
   createCustomMetadataColumnId,
   createTagColumnId,
@@ -29,6 +30,17 @@ export const RUN_NAME_COLUMN_ID = 'run_name';
 export const LOGGED_MODEL_COLUMN_ID = 'logged_model';
 export const TOKENS_COLUMN_ID = 'tokens';
 export const CUSTOM_METADATA_COLUMN_ID = 'custom_metadata';
+export const SPAN_NAME_COLUMN_ID = 'span.name';
+export const SPAN_TYPE_COLUMN_ID = 'span.type';
+export const SPAN_STATUS_COLUMN_ID = 'span.status';
+export const SPAN_CONTENT_COLUMN_ID = 'span.content';
+export const SIMULATION_GOAL_COLUMN_ID = 'simulation_goal';
+export const SIMULATION_PERSONA_COLUMN_ID = 'simulation_persona';
+export const LINKED_PROMPTS_COLUMN_ID = 'prompt';
+export const ISSUE_ID_COLUMN_ID = 'issue.id';
+export const ISSUES_COLUMN_ID = 'issues';
+export const GIT_BRANCH_COLUMN_ID = 'git_branch';
+export const GIT_COMMIT_COLUMN_ID = 'git_commit';
 
 export const SORTABLE_INFO_COLUMNS = [EXECUTION_DURATION_COLUMN_ID, REQUEST_TIME_COLUMN_ID, SESSION_COLUMN_ID];
 // Columns that are sortable by the server. Server-side sorting should be prioritized over client-side sorting.
@@ -70,16 +82,16 @@ export const useTableColumns = (
     let inputCols = [];
     if (!isTraceInfoV3) {
       let inputKeys = new Set<string>();
-      let traceInfoColumns = new Set<keyof TraceInfoV3>();
+      let traceInfoColumns = new Set<keyof ModelTraceInfoV3>();
 
       currentEvaluationResults.forEach((result) => {
         const { inputs } = result;
         inputKeys = new Set<string>([...inputKeys, ...Object.keys(inputs || {})]);
 
-        traceInfoColumns = new Set<keyof TraceInfoV3>([
+        traceInfoColumns = new Set<keyof ModelTraceInfoV3>([
           ...traceInfoColumns,
           ...Object.keys(result.traceInfo || {}),
-        ] as (keyof TraceInfoV3)[]);
+        ] as (keyof ModelTraceInfoV3)[]);
       });
 
       inputCols = [...inputKeys].map((key) => ({
@@ -96,7 +108,8 @@ export const useTableColumns = (
             description: 'Column label for request',
           }),
           type: TracesTableColumnType.INPUT,
-          group: TracesTableColumnGroup.INFO,
+          group: TracesTableColumnGroup.BASE,
+          filterOrder: 0,
         },
       ];
     }
@@ -127,7 +140,7 @@ export const useTableColumns = (
             description: 'Column label for trace ID',
           }),
           type: TracesTableColumnType.TRACE_INFO,
-          group: TracesTableColumnGroup.INFO,
+          group: TracesTableColumnGroup.BASE,
         },
         {
           id: TRACE_NAME_COLUMN_ID,
@@ -145,7 +158,8 @@ export const useTableColumns = (
             description: 'Column label for response',
           }),
           type: TracesTableColumnType.TRACE_INFO,
-          group: TracesTableColumnGroup.INFO,
+          group: TracesTableColumnGroup.BASE,
+          filterOrder: 0,
         },
         {
           id: USER_COLUMN_ID,
@@ -162,6 +176,10 @@ export const useTableColumns = (
             defaultMessage: 'Session',
             description: 'Column label for session',
           }),
+          filterLabel: intl.formatMessage({
+            defaultMessage: 'Session ID',
+            description: 'Filter label for session ID',
+          }),
           type: TracesTableColumnType.TRACE_INFO,
           group: TracesTableColumnGroup.INFO,
         },
@@ -170,6 +188,10 @@ export const useTableColumns = (
           label: intl.formatMessage({
             defaultMessage: 'Execution time',
             description: 'Column label for execution time',
+          }),
+          filterLabel: intl.formatMessage({
+            defaultMessage: 'Execution time (ms)',
+            description: 'Column label for execution time with the unit suffix',
           }),
           type: TracesTableColumnType.TRACE_INFO,
           group: TracesTableColumnGroup.INFO,
@@ -202,10 +224,38 @@ export const useTableColumns = (
           group: TracesTableColumnGroup.INFO,
         },
         {
+          id: GIT_BRANCH_COLUMN_ID,
+          label: intl.formatMessage({
+            defaultMessage: 'Git branch',
+            description: 'Column label for the git branch the trace was produced on',
+          }),
+          type: TracesTableColumnType.TRACE_INFO,
+          group: TracesTableColumnGroup.INFO,
+        },
+        {
+          id: GIT_COMMIT_COLUMN_ID,
+          label: intl.formatMessage({
+            defaultMessage: 'Git commit',
+            description: 'Column label for the git commit hash the trace was produced on',
+          }),
+          type: TracesTableColumnType.TRACE_INFO,
+          group: TracesTableColumnGroup.INFO,
+        },
+        {
           id: LOGGED_MODEL_COLUMN_ID,
           label: intl.formatMessage({
             defaultMessage: 'Version',
             description: 'Column label for logged model',
+          }),
+          type: TracesTableColumnType.TRACE_INFO,
+          group: TracesTableColumnGroup.INFO,
+        },
+        // Only available in OSS
+        {
+          id: LINKED_PROMPTS_COLUMN_ID,
+          label: intl.formatMessage({
+            defaultMessage: 'Prompt',
+            description: 'Column label for linked prompts',
           }),
           type: TracesTableColumnType.TRACE_INFO,
           group: TracesTableColumnGroup.INFO,
@@ -243,9 +293,23 @@ export const useTableColumns = (
       const allResults = [...currentEvaluationResults, ...(otherEvaluationResults || [])];
       // Populate custom metadata columns
       const customMetadataColumns: Record<string, TracesTableColumn> = {};
+      let hasGoal = false;
+      let hasPersona = false;
+      const sessionGroupingEnabled = shouldEnableSessionGrouping();
+
       allResults.forEach((result: RunEvaluationTracesDataEntry) => {
         const traceMetadata = result.traceInfo?.trace_metadata;
         if (traceMetadata) {
+          // Check for simulation goal and persona (only when session grouping is enabled)
+          if (sessionGroupingEnabled) {
+            if (traceMetadata['mlflow.simulation.goal']) {
+              hasGoal = true;
+            }
+            if (traceMetadata['mlflow.simulation.persona']) {
+              hasPersona = true;
+            }
+          }
+
           Object.keys(traceMetadata).forEach((key) => {
             if (!key.startsWith(MLFLOW_INTERNAL_PREFIX) && !customMetadataColumns[key]) {
               customMetadataColumns[key] = {
@@ -274,6 +338,30 @@ export const useTableColumns = (
         }
       });
       infoCols = [...infoCols, ...Object.values(customMetadataColumns)];
+
+      // Add simulation goal and persona columns if present
+      if (hasGoal) {
+        infoCols.push({
+          id: SIMULATION_GOAL_COLUMN_ID,
+          label: intl.formatMessage({
+            defaultMessage: 'Goal',
+            description: 'Column label for simulation goal',
+          }),
+          type: TracesTableColumnType.TRACE_INFO,
+          group: TracesTableColumnGroup.INFO,
+        });
+      }
+      if (hasPersona) {
+        infoCols.push({
+          id: SIMULATION_PERSONA_COLUMN_ID,
+          label: intl.formatMessage({
+            defaultMessage: 'Persona',
+            description: 'Column label for simulation persona',
+          }),
+          type: TracesTableColumnType.TRACE_INFO,
+          group: TracesTableColumnGroup.INFO,
+        });
+      }
 
       if (shouldEnableTagGrouping()) {
         const tagColumnRecords: Record<string, TracesTableColumn> = {};
@@ -310,7 +398,18 @@ export const useTableColumns = (
         : [];
     }
 
-    return [...inputCols, ...infoCols, ...assessmentColumns, ...Object.values(expectationColumns)].filter(
+    // Issues column is placed at the end of INFO group
+    const issuesCol = {
+      id: ISSUES_COLUMN_ID,
+      label: intl.formatMessage({
+        defaultMessage: 'Issues',
+        description: 'Column label for issues',
+      }),
+      type: TracesTableColumnType.TRACE_INFO,
+      group: TracesTableColumnGroup.INFO,
+    };
+
+    return [...inputCols, ...infoCols, issuesCol, ...assessmentColumns, ...Object.values(expectationColumns)].filter(
       (col): col is TracesTableColumn => Boolean(col),
     );
   }, [currentEvaluationResults, intl, assessmentInfos, runUuid, otherEvaluationResults, isTraceInfoV3Override]);

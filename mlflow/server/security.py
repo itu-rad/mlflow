@@ -20,6 +20,7 @@ from mlflow.server.security_utils import (
     is_api_endpoint,
     should_block_cors_request,
 )
+from mlflow.tracing.constant import TRACE_RENDERER_ASSET_PATH
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +55,12 @@ def init_security_middleware(app: Flask) -> None:
     x_frame_options = MLFLOW_SERVER_X_FRAME_OPTIONS.get()
 
     if allowed_origins and "*" in allowed_origins:
-        CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+        _logger.warning(
+            "MLFLOW_SERVER_CORS_ALLOWED_ORIGINS=* is set; disabling credentialed CORS. "
+            "Wildcard origins with credentials is a CORS spec violation. "
+            "Set an explicit origin allowlist to enable credentialed cross-origin requests."
+        )
+        CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
     else:
         cors_origins = (allowed_origins or []) + LOCALHOST_ORIGIN_PATTERNS
         CORS(
@@ -78,6 +84,12 @@ def init_security_middleware(app: Flask) -> None:
                 )
             return None
 
+    # The block_cross_origin_state_changes hook is intentionally skipped when the
+    # admin sets MLFLOW_SERVER_CORS_ALLOWED_ORIGINS=*: server-side rejection of
+    # cross-origin requests would defeat the purpose of wildcard mode. The
+    # browser-side guardrail is that supports_credentials=False above causes
+    # browsers to strip cookies/Authorization headers on cross-origin requests,
+    # so authenticated endpoints still 401.
     if not (allowed_origins and "*" in allowed_origins):
 
         @app.before_request
@@ -97,7 +109,10 @@ def init_security_middleware(app: Flask) -> None:
     def add_security_headers(response: Response) -> Response:
         response.headers["X-Content-Type-Options"] = "nosniff"
 
-        if x_frame_options and x_frame_options.upper() != "NONE":
+        # Skip X-Frame-Options for notebook-trace-renderer to allow iframe embedding in Jupyter
+        is_notebook_renderer = request.path.startswith(TRACE_RENDERER_ASSET_PATH)
+
+        if x_frame_options and x_frame_options.upper() != "NONE" and not is_notebook_renderer:
             response.headers["X-Frame-Options"] = x_frame_options.upper()
 
         if (

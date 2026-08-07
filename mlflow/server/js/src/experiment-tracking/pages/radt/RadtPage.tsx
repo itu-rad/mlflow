@@ -1,87 +1,65 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollablePageWrapper } from '@mlflow/mlflow/src/common/components/ScrollablePageWrapper';
-import { Button, Header, Spacer, useDesignSystemTheme } from '@databricks/design-system';
-import { FormattedMessage } from 'react-intl';
+import { Spacer, useDesignSystemTheme } from '@databricks/design-system';
+import { useLocation, useNavigate } from '../../../common/utils/RoutingUtils';
 import { withErrorBoundary } from '../../../common/utils/withErrorBoundary';
 import ErrorUtils from '../../../common/utils/ErrorUtils';
 
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useCallback } from 'react';
+// Baked in at build time by craco/webpack, so the deployed image cannot change
+// it without a rebuild.
+const RADT_URL = process.env['REACT_APP_RADT_URL']?.trim() || 'missing_radT_url';
+
+/**
+ * Only same-document suffixes are forwarded into our own pathname. Rejecting
+ * anything else keeps a message from an unexpected frame from steering
+ * navigation off this page.
+ */
+const isSameDocumentSuffix = (url: string) => /^[?#]/.test(url);
 
 const RadtPage = () => {
   const { theme } = useDesignSystemTheme();
-
-  const DEFAULT_IFRAME_SRC = (process.env['REACT_APP_RADT_URL'] && process.env['REACT_APP_RADT_URL'].trim()) || 'missing_radT_url';
-  console.log(`src`, DEFAULT_IFRAME_SRC, process.env);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // keep a separate state for the iframe's src so changing the URL does not reload the iframe
-  const [iframeSrc, setIframeSrc] = useState<string>(() => {
-    // initialize iframe src once from current location.search
-    try {
-      return DEFAULT_IFRAME_SRC + (location.search || '');
-    } catch {
-      return DEFAULT_IFRAME_SRC;
-    }
-  });
-  const initializedRef = useRef(true);
+  // Held in state rather than derived from `location`: radT drives the URL via
+  // postMessage, and feeding those updates back into `src` would reload the
+  // iframe and discard the state radT just reported.
+  const [iframeSrc] = useState(() => `${RADT_URL}${location.search}`);
 
-  const handleOpenInNewTab = () => {
-    const current = iframeRef.current?.src || DEFAULT_IFRAME_SRC;
-    window.open(current, '_blank');
-  };
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
 
-  // Improved message handler: accept messages regardless of evt.origin but validate the reported URL
   useEffect(() => {
     const onMessage = (evt: MessageEvent) => {
       const data = evt.data;
-      let url: string | null = null;
-
-      if (!data) return;
-      if (data.type === 'href' && typeof data.href === 'string') {
-        url = data.href;
-      } else {
+      if (!data || data.type !== 'href' || typeof data.href !== 'string') {
         return;
       }
-
-      if (!url) return;
-
-      navigate(`${location.pathname}${url}`, { replace: false });
-
+      if (!isSameDocumentSuffix(data.href)) {
+        return;
+      }
+      navigate(`${pathnameRef.current}${data.href}`);
     };
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [navigate]);
 
   return (
     <ScrollablePageWrapper css={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      {/* <Spacer shrinks={false} /> */}
-      {/* <Header
-        title={<FormattedMessage defaultMessage="radT" description="Header title for the radT page" />}
-        buttons={
-          <Button componentId="mlflow.radt.openInNewTab" type="primary" onClick={handleOpenInNewTab}>
-            <FormattedMessage
-              defaultMessage="Open in new tab"
-              description="Label for button to open radT in a new browser tab"
-            />
-          </Button>
-        }
-      /> */}
       <Spacer shrinks={false} />
-      <div css={{ 
-        flex: 1, 
-        display: 'flex', 
-        flexDirection: 'column', 
-        overflow: 'hidden',
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.general.borderRadiusBase,
-      }}>
-        <iframe 
-          ref={iframeRef}
-          src={iframeSrc}//buildIframeUrl()}
+      <div
+        css={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          border: `1px solid ${theme.colors.border}`,
+          borderRadius: theme.general.borderRadiusBase,
+        }}
+      >
+        <iframe
+          src={iframeSrc}
           title="radT Analyze"
           css={{
             border: 'none',

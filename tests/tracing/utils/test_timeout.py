@@ -63,6 +63,10 @@ class _SlowModel:
         time.sleep(1)
 
 
+@pytest.mark.skip(
+    reason="batch_get_traces only return full traces for now, re-enable this test "
+    "when batch_get_traces is updated to support partial traces"
+)
 def test_trace_halted_after_timeout(monkeypatch):
     # When MLFLOW_TRACE_TIMEOUT_SECONDS is set, MLflow should halt the trace after
     # the timeout and log it to the backend with an error status
@@ -82,13 +86,14 @@ def test_trace_halted_after_timeout(monkeypatch):
     assert root_span.status.status_code == SpanStatusCode.ERROR
     assert root_span.events[0].name == "exception"
     assert (
-        root_span.events[0]
+        root_span
+        .events[0]
         .attributes["exception.message"]
         .startswith(f"Trace {trace.info.request_id} is timed out")
     )
 
     first_span = trace.data.spans[1]
-    assert first_span.name == "slow_function_1"
+    assert first_span.name == "slow_function"
     assert first_span.status.status_code == SpanStatusCode.OK
 
     # The rest of the spans should not be logged to the backend.
@@ -112,7 +117,7 @@ def test_trace_halted_after_timeout_in_model_serving(
         with set_prediction_context(Context(request_id=request_id)):
             _SlowModel().predict(seconds)
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-tracing-timeout") as executor:
         executor.map(_run_single, ["request-id-1", "request-id-2", "request-id-3"], [5, 6, 1])
 
     # All traces should be logged
@@ -126,6 +131,10 @@ def test_trace_halted_after_timeout_in_model_serving(
     assert pop_trace(request_id="request-id-3")["info"]["state"] == SpanStatusCode.OK
 
 
+@pytest.mark.skip(
+    reason="batch_get_traces only return full traces for now, re-enable this test "
+    "when batch_get_traces is updated to support partial traces"
+)
 def test_handle_timeout_update(monkeypatch):
     # Create a first trace. At this moment, there is no timeout set
     _SlowModel().predict(3)

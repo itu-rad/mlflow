@@ -11,7 +11,9 @@ from botocore.response import StreamingBody
 from packaging.version import Version
 
 import mlflow
+from mlflow.entities import SpanLogLevel
 from mlflow.tracing.constant import SpanAttributeKey
+from mlflow.version import IS_TRACING_SDK_ONLY
 
 from tests.tracing.helper import get_traces
 
@@ -49,6 +51,17 @@ _ANTHROPIC_RESPONSE = {
     "usage": {
         "input_tokens": 8,
         "output_tokens": 12,
+    },
+}
+
+# Anthropic-native body with prompt caching active. input_tokens excludes cache tokens.
+_ANTHROPIC_CACHED_RESPONSE = {
+    **_ANTHROPIC_RESPONSE,
+    "usage": {
+        "input_tokens": 8,
+        "output_tokens": 12,
+        "cache_read_input_tokens": 100,
+        "cache_creation_input_tokens": 50,
     },
 }
 
@@ -102,6 +115,19 @@ _AMAZON_NOVA_RESPONSE = {
         "inputTokens": 8,
         "outputTokens": 12,
         "totalTokens": 20,
+    },
+}
+
+# Nova-native body with prompt caching active. Nova reports cache fields with a
+# TokenCount suffix, unlike the Converse API.
+_AMAZON_NOVA_CACHED_RESPONSE = {
+    **_AMAZON_NOVA_RESPONSE,
+    "usage": {
+        "inputTokens": 8,
+        "outputTokens": 12,
+        "totalTokens": 20,
+        "cacheReadInputTokenCount": 100,
+        "cacheWriteInputTokenCount": 0,
     },
 }
 
@@ -192,6 +218,30 @@ def _create_dummy_invoke_model_response(llm_response):
             {"input_tokens": 8, "output_tokens": 12, "total_tokens": 20},
         ),
         (
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            _ANTHROPIC_REQUEST,
+            _ANTHROPIC_CACHED_RESPONSE,
+            {
+                "input_tokens": 158,
+                "output_tokens": 12,
+                "cache_read_input_tokens": 100,
+                "cache_creation_input_tokens": 50,
+                "total_tokens": 170,
+            },
+        ),
+        (
+            "us.amazon.nova-lite-v1:0",
+            _AMAZON_NOVA_REQUEST,
+            _AMAZON_NOVA_CACHED_RESPONSE,
+            {
+                "input_tokens": 108,
+                "output_tokens": 12,
+                "cache_read_input_tokens": 100,
+                "cache_creation_input_tokens": 0,
+                "total_tokens": 120,
+            },
+        ),
+        (
             "cohere.command-r-plus-v1:0",
             _COHERE_REQUEST,
             _COHERE_RESPONSE,
@@ -229,12 +279,14 @@ def test_bedrock_autolog_invoke_model_llm(model_id, llm_request, llm_response, e
     span = traces[0].data.spans[0]
     assert span.name == "BedrockRuntime.invoke_model"
     assert span.span_type == "LLM"
+    assert span.log_level == SpanLogLevel.INFO
     assert span.inputs == {"body": request_body, "modelId": model_id}
     assert span.outputs == {
         "body": llm_response,
         "ResponseMetadata": response["ResponseMetadata"],
         "contentType": "application/json",
     }
+    assert span.model_name == model_id
 
     # Check token usage validation using parameterized expected values
     _assert_token_usage_matches(span, expected_usage)
@@ -272,6 +324,7 @@ def test_bedrock_autolog_invoke_model_embeddings():
         "ResponseMetadata": response["ResponseMetadata"],
         "contentType": "application/json",
     }
+    assert span.model_name == model_id
 
 
 def test_bedrock_autolog_invoke_model_capture_exception():
@@ -279,16 +332,14 @@ def test_bedrock_autolog_invoke_model_capture_exception():
 
     client = boto3.client("bedrock-runtime", region_name="us-west-2")
 
-    request_body = json.dumps(
-        {
-            # Invalid user role to trigger an exception
-            "messages": [{"role": "invalid-user", "content": "Hi"}],
-            "max_tokens": 300,
-            "anthropic_version": "bedrock-2023-05-31",
-            "temperature": 0.1,
-            "top_p": 0.9,
-        }
-    )
+    request_body = json.dumps({
+        # Invalid user role to trigger an exception
+        "messages": [{"role": "invalid-user", "content": "Hi"}],
+        "max_tokens": 300,
+        "anthropic_version": "bedrock-2023-05-31",
+        "temperature": 0.1,
+        "top_p": 0.9,
+    })
 
     with pytest.raises(NoCredentialsError, match="Unable to locate credentials"):
         client.invoke_model(
@@ -309,6 +360,7 @@ def test_bedrock_autolog_invoke_model_capture_exception():
         "modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
     }
     assert span.outputs is None
+    assert span.model_name == "anthropic.claude-3-5-sonnet-20241022-v2:0"
     assert len(span.events) == 1
     assert span.events[0].name == "exception"
     assert span.events[0].attributes["exception.message"].startswith("Unable to locate credentials")
@@ -392,6 +444,7 @@ def test_bedrock_autolog_invoke_model_stream():
     assert span.span_type == "LLM"
     assert span.inputs == {"body": request_body, "modelId": _ANTHROPIC_MODEL_ID}
     assert span.outputs == {"body": "EventStream"}
+    assert span.model_name == _ANTHROPIC_MODEL_ID
     # Raw chunks must be recorded as span events
     assert len(span.events) == len(dummy_chunks)
     for i in range(len(dummy_chunks)):
@@ -451,6 +504,19 @@ _CONVERSE_RESPONSE = {
     "stopReason": "end_turn",
     "usage": {"inputTokens": 8, "outputTokens": 12},
     "metrics": {"latencyMs": 551},
+}
+
+# Converse response with prompt caching active. Per the AWS docs, inputTokens contains
+# only the non-cached input tokens.
+_CONVERSE_CACHED_RESPONSE = {
+    **_CONVERSE_RESPONSE,
+    "usage": {
+        "inputTokens": 8,
+        "outputTokens": 12,
+        "totalTokens": 20,
+        "cacheReadInputTokens": 100,
+        "cacheWriteInputTokens": 50,
+    },
 }
 
 _CONVERSE_EXPECTED_CHAT_ATTRIBUTE = [
@@ -753,6 +819,20 @@ _CONVERSE_MULTI_MODAL_EXPECTED_CHAT_ATTRIBUTE = [
             None,
             {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
         ),
+        # 5. Conversation with prompt caching active
+        (
+            _CONVERSE_REQUEST,
+            _CONVERSE_CACHED_RESPONSE,
+            _CONVERSE_EXPECTED_CHAT_ATTRIBUTE,
+            None,
+            {
+                "input_tokens": 158,
+                "output_tokens": 12,
+                "cache_read_input_tokens": 100,
+                "cache_creation_input_tokens": 50,
+                "total_tokens": 170,
+            },
+        ),
     ],
 )
 def test_bedrock_autolog_converse(
@@ -776,6 +856,7 @@ def test_bedrock_autolog_converse(
     assert span.outputs == response
     assert span.get_attribute(SpanAttributeKey.CHAT_TOOLS) == expected_tool_attr
     assert span.get_attribute(SpanAttributeKey.MESSAGE_FORMAT) == "bedrock"
+    assert span.model_name == _request["modelId"]
 
     # Validate token usage against parameterized expected values
     _assert_token_usage_matches(span, expected_usage)
@@ -799,6 +880,7 @@ def test_bedrock_autolog_converse_error():
     assert span.status.status_code == "ERROR"
     assert span.inputs == _CONVERSE_REQUEST
     assert span.outputs is None
+    assert span.model_name == _CONVERSE_REQUEST["modelId"]
     assert len(span.events) == 1
 
 
@@ -853,7 +935,12 @@ def test_bedrock_autolog_converse_skip_unsupported_content():
     ],
 )
 def test_bedrock_autolog_converse_stream(
-    _request, expected_response, expected_chat_attr, expected_tool_attr, expected_usage
+    _request,
+    expected_response,
+    expected_chat_attr,
+    expected_tool_attr,
+    expected_usage,
+    mock_litellm_cost,
 ):
     mlflow.bedrock.autolog()
 
@@ -880,12 +967,22 @@ def test_bedrock_autolog_converse_stream(
     assert span.inputs == _request
     assert span.outputs == expected_response
     assert span.get_attribute(SpanAttributeKey.CHAT_TOOLS) == expected_tool_attr
+    assert span.model_name == _request["modelId"]
     assert len(span.events) > 0
     assert span.events[0].name == "messageStart"
     assert json.loads(span.events[0].attributes["json"]) == {"role": "assistant"}
 
     # Validate token usage against parameterized expected values
     _assert_token_usage_matches(span, expected_usage)
+    if not IS_TRACING_SDK_ONLY:
+        # Verify cost is calculated (input_tokens * 1.0 + output_tokens * 2.0)
+        expected_cost = {
+            "input_cost": float(expected_usage["input_tokens"]),
+            "output_cost": float(expected_usage["output_tokens"]) * 2.0,
+            "total_cost": float(expected_usage["input_tokens"])
+            + float(expected_usage["output_tokens"]) * 2.0,
+        }
+        assert span.llm_cost == expected_cost
 
 
 def _event_stream(raw_response, chunk_size=10):
@@ -1008,6 +1105,43 @@ TOKEN_USAGE_EDGE_CASE_DATA = [
         "name": "string_token_values",
         "usage_data": {"inputTokens": "10", "outputTokens": "5"},
         "expected_usage": None,  # Should return None since values are strings
+    },
+    # 9. Prompt caching fields. Bedrock reports inputTokens excluding cache tokens, so
+    # input and total must be normalized to include them.
+    {
+        "name": "cache_token_fields",
+        "usage_data": {
+            "inputTokens": 500,
+            "outputTokens": 200,
+            "totalTokens": 700,
+            "cacheReadInputTokens": 10000,
+            "cacheWriteInputTokens": 300,
+        },
+        "expected_usage": {
+            "input_tokens": 10800,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 10000,
+            "cache_creation_input_tokens": 300,
+            "total_tokens": 11000,
+        },
+    },
+    # 10. Zero cache fields keep the reported totals untouched
+    {
+        "name": "zero_cache_token_fields",
+        "usage_data": {
+            "inputTokens": 8,
+            "outputTokens": 12,
+            "totalTokens": 20,
+            "cacheReadInputTokens": 0,
+            "cacheWriteInputTokens": 0,
+        },
+        "expected_usage": {
+            "input_tokens": 8,
+            "output_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "total_tokens": 20,
+        },
     },
 ]
 
@@ -1229,6 +1363,46 @@ STREAM_TOKEN_USAGE_EDGE_CASES = [
             {"type": "message_stop"},
         ],
         "expected_usage": {"input_tokens": 10, "output_tokens": 12, "total_tokens": 22},
+    },
+    # 7. Cache fields in message_start must survive buffering and be normalized into
+    # input exactly once at stream close
+    {
+        "name": "cache_fields_in_message_start",
+        "chunks": [
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "123",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {
+                        "input_tokens": 500,
+                        "output_tokens": 1,
+                        "cache_read_input_tokens": 10000,
+                        "cache_creation_input_tokens": 300,
+                    },
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "content_block": {"type": "text", "text": "Hello!"},
+            },
+            {
+                "type": "message_delta",
+                "delta": {},
+                "usage": {"output_tokens": 200},
+            },
+            {"type": "message_stop"},
+        ],
+        "expected_usage": {
+            "input_tokens": 10800,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 10000,
+            "cache_creation_input_tokens": 300,
+            "total_tokens": 11000,
+        },
     },
 ]
 

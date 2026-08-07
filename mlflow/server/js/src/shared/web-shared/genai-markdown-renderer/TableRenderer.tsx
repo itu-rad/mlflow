@@ -146,7 +146,8 @@ const VirtualizedTable = ({ header, rows }: { header: React.ReactNode; rows: Rea
 };
 
 export const VirtualizedTableRow = ({ children, node }: ReactMarkdownProps<'tr'>) => {
-  const isHeader = node?.children.some((child) => node?.tagName === 'th'); // build fix
+  // @ts-expect-error Property 'tagName' does not exist on type 'ElementContent
+  const isHeader = node?.children.some((child) => child.tagName === 'th');
   const { theme } = useDesignSystemTheme();
   return (
     <TableRow

@@ -6,6 +6,7 @@ import mlflow
 from mlflow.entities.span import SpanType
 from mlflow.entities.span_status import SpanStatusCode
 from mlflow.tracing.constant import TokenUsageKey, TraceMetadataKey
+from mlflow.version import IS_TRACING_SDK_ONLY
 
 from tests.tracing.helper import get_traces, skip_when_testing_trace_sdk
 
@@ -61,17 +62,18 @@ def test_langgraph_save_as_code():
 @skip_when_testing_trace_sdk
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_async", [True, False], ids=["async", "sync"])
-async def test_langgraph_tracing_prebuilt(is_async):
+async def test_langgraph_tracing_prebuilt(is_async, mock_litellm_cost):
     from tests.langgraph.sample_code.langgraph_prebuilt import graph
 
     mlflow.langchain.autolog()
 
     input_example = {"messages": [{"role": "user", "content": "what is the weather in sf?"}]}
+    config = {"configurable": {"thread_id": "1"}}
 
     if is_async:
-        await graph.ainvoke(input_example)
+        await graph.ainvoke(input_example, config)
     else:
-        graph.invoke(input_example)
+        graph.invoke(input_example, config)
 
     traces = get_traces()
     assert len(traces) == 1
@@ -109,6 +111,21 @@ async def test_langgraph_tracing_prebuilt(is_async):
         TokenUsageKey.TOTAL_TOKENS: 45,
     }
 
+    # Thread ID should be recoded in the trace metadata
+    assert traces[0].info.trace_metadata[TraceMetadataKey.TRACE_SESSION] == "1"
+
+    # Verify chat model spans have model name extracted
+    chat_spans = [s for s in traces[0].data.spans if s.span_type == SpanType.CHAT_MODEL]
+    for chat_span in chat_spans:
+        assert chat_span.model_name == "gpt-3.5-turbo"
+        if not IS_TRACING_SDK_ONLY:
+            usage = chat_span.get_attribute("mlflow.chat.tokenUsage")
+            assert chat_span.llm_cost == {
+                "input_cost": usage["input_tokens"] * 1.0,
+                "output_cost": usage["output_tokens"] * 2.0,
+                "total_cost": usage["input_tokens"] * 1.0 + usage["output_tokens"] * 2.0,
+            }
+
 
 @skip_when_testing_trace_sdk
 def test_langgraph_tracing_diy_graph():
@@ -133,6 +150,9 @@ def test_langgraph_tracing_diy_graph():
 
     chat_spans = [span for span in traces[0].data.spans if span.name.startswith("ChatOpenAI")]
     assert len(chat_spans) == 3
+    # Verify all chat model spans have model name extracted
+    for chat_span in chat_spans:
+        assert chat_span.model_name == "gpt-3.5-turbo"
 
 
 @skip_when_testing_trace_sdk
@@ -166,6 +186,9 @@ def test_langgraph_tracing_with_custom_span():
     # Validate chat model spans
     chat_spans = [s for s in spans if s.span_type == SpanType.CHAT_MODEL]
     assert len(chat_spans) == 3
+    # Verify all chat model spans have model name extracted
+    for chat_span in chat_spans:
+        assert chat_span.model_name == "gpt-3.5-turbo"
 
     # Validate tool span
     tool_span = next(s for s in spans if s.span_type == SpanType.TOOL)
@@ -182,7 +205,7 @@ def test_langgraph_tracing_with_custom_span():
     assert inner_span.outputs == "It's always sunny in sf"
 
     inner_runnable_span = next(s for s in spans if s.parent_id == inner_span.span_id)
-    assert inner_runnable_span.name == "RunnableSequence_2"
+    assert inner_runnable_span.name == "RunnableSequence"
 
 
 @skip_when_testing_trace_sdk

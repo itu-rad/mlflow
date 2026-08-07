@@ -80,6 +80,7 @@ from mlflow.utils.mlflow_tags import (
 )
 from mlflow.utils.model_utils import (
     _add_code_from_conf_to_system_path,
+    _copy_extra_files,
     _get_flavor_configuration,
     _validate_and_copy_code_paths,
     _validate_and_prepare_target_save_path,
@@ -121,8 +122,10 @@ def save_model(
     input_example: ModelInputExample = None,
     pip_requirements=None,
     extra_pip_requirements=None,
-    model_format="xgb",
+    model_format="ubj",
     metadata=None,
+    extra_files=None,
+    **kwargs,
 ):
     """Save an XGBoost model to a path on the local file system.
 
@@ -137,8 +140,12 @@ def save_model(
         input_example: {{ input_example }}
         pip_requirements: {{ pip_requirements }}
         extra_pip_requirements: {{ extra_pip_requirements }}
-        model_format: File format in which the model is to be saved.
+        model_format: File format in which the model is to be saved. Defaults to "ubj" (UBJSON),
+            which is the recommended format for optimal performance and cross-platform
+            compatibility. Also supports "json" and "xgb" formats.
         metadata: {{ metadata }}
+        extra_files: {{ extra_files }}
+        kwargs: {{ kwargs }}
     """
     import xgboost as xgb
 
@@ -166,8 +173,11 @@ def save_model(
     model_data_path = os.path.join(path, model_data_subpath)
 
     # Save an XGBoost model
-    xgb_model.save_model(model_data_path)
+    xgb_model.save_model(model_data_path, **kwargs)
     xgb_model_class = _get_fully_qualified_class_name(xgb_model)
+
+    extra_files_config = _copy_extra_files(extra_files, path)
+
     pyfunc.add_to_model(
         mlflow_model,
         loader_module="mlflow.xgboost",
@@ -183,6 +193,7 @@ def save_model(
         model_class=xgb_model_class,
         model_format=model_format,
         code=code_dir_subpath,
+        **extra_files_config,
     )
     if size := get_total_file_size(path):
         mlflow_model.model_size_bytes = size
@@ -234,8 +245,9 @@ def log_model(
     await_registration_for=DEFAULT_AWAIT_MAX_SLEEP_SECONDS,
     pip_requirements=None,
     extra_pip_requirements=None,
-    model_format="xgb",
+    model_format="ubj",
     metadata=None,
+    extra_files=None,
     name: str | None = None,
     params: dict[str, Any] | None = None,
     tags: dict[str, Any] | None = None,
@@ -262,8 +274,11 @@ def log_model(
             waits for five minutes. Specify 0 or None to skip waiting.
         pip_requirements: {{ pip_requirements }}
         extra_pip_requirements: {{ extra_pip_requirements }}
-        model_format: File format in which the model is to be saved.
+        model_format: File format in which the model is to be saved. Defaults to "ubj" (UBJSON),
+            which is the recommended format for optimal performance and cross-platform
+            compatibility. Also supports "json" and "xgb" formats.
         metadata: {{ metadata }}
+        extra_files: {{ extra_files }}
         name: {{ name }}
         params: {{ params }}
         tags: {{ tags }}
@@ -290,6 +305,7 @@ def log_model(
         await_registration_for=await_registration_for,
         pip_requirements=pip_requirements,
         extra_pip_requirements=extra_pip_requirements,
+        extra_files=extra_files,
         metadata=metadata,
         params=params,
         tags=tags,
@@ -457,7 +473,7 @@ def autolog(
     disable_for_unsupported_versions=False,
     silent=False,
     registered_model_name=None,
-    model_format="xgb",
+    model_format="ubj",
     extra_tags=None,
 ):
     """
@@ -506,7 +522,9 @@ def autolog(
         registered_model_name: If given, each time a model is trained, it is registered as a
             new model version of the registered model with this name.
             The registered model is created if it does not already exist.
-        model_format: File format in which the model is to be saved.
+        model_format: File format in which the model is to be saved. Defaults to "ubj" (UBJSON),
+            which is the recommended format for optimal performance and cross-platform
+            compatibility. Also supports "json" and "xgb" formats.
         extra_tags: A dictionary of extra tags to set on each managed run created by autologging.
     """
     import numpy as np
@@ -584,9 +602,9 @@ def autolog(
                 # Sort features and importance values by magnitude during transformation to a
                 # `num_features`-by-`num_classes` matrix
                 features = features[indices]
-                importances_per_class_by_feature = np.array(
-                    [[importance] for importance in importances_per_class_by_feature[indices]]
-                )
+                importances_per_class_by_feature = np.array([
+                    [importance] for importance in importances_per_class_by_feature[indices]
+                ])
                 # In this case, do not include class labels on the feature importance plot because
                 # only one importance value has been provided per feature, rather than an
                 # one importance value for each class per feature

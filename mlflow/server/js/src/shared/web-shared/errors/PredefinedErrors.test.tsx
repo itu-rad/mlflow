@@ -1,3 +1,4 @@
+import { describe, it, expect } from '@jest/globals';
 import type { ErrorLogType } from './ErrorLogType';
 import type { ErrorName } from './ErrorName';
 import {
@@ -47,6 +48,13 @@ describe('PredefinedErrors', () => {
       const matchedError = matchPredefinedError(testUnknownError);
 
       expect(matchedError).toBeInstanceOf(UnknownError);
+    });
+  });
+
+  describe('UnauthorizedError', () => {
+    it('should have the correct message string', () => {
+      const error = new UnauthorizedError({});
+      expect(error.message).toBe('User is not authorized.');
     });
   });
 });

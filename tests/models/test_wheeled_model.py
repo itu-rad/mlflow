@@ -1,13 +1,14 @@
 import os
 import random
 import re
+from io import BytesIO
 from typing import Any, NamedTuple
 from unittest import mock
 
 import numpy as np
 import pandas as pd
 import pytest
-import sklearn.neighbors as knn
+import sklearn.linear_model as logreg_module
 import yaml
 from sklearn import datasets
 
@@ -48,9 +49,9 @@ def sklearn_knn_model():
     iris = datasets.load_iris()
     X = iris.data[:, :2]  # we only take the first two features.
     y = iris.target
-    knn_model = knn.KNeighborsClassifier()
-    knn_model.fit(X, y)
-    return ModelWithData(model=knn_model, inference_data=X)
+    logreg_model = logreg_module.LogisticRegression()
+    logreg_model.fit(X, y)
+    return ModelWithData(model=logreg_model, inference_data=X)
 
 
 def random_int(lo=1, hi=1000000000):
@@ -278,7 +279,7 @@ def test_create_pip_requirement(tmp_path):
     )
     wm._create_pip_requirement(conda_env_path, pip_reqs_path)
     with open(pip_reqs_path) as f:
-        pip_reqs = [x.strip() for x in f.readlines()]
+        pip_reqs = [x.strip() for x in f]
     assert expected_pip_deps.sort() == pip_reqs.sort()
 
 
@@ -346,7 +347,7 @@ def test_serving_wheeled_model(sklearn_knn_model):
         content_type=pyfunc_scoring_server.CONTENT_TYPE_JSON,
         extra_args=EXTRA_PYFUNC_SERVING_TEST_ARGS,
     )
-    scores = pd.read_json(resp.content.decode("utf-8"), orient="records").values.squeeze()
+    scores = pd.read_json(BytesIO(resp.content), orient="records").values.squeeze()
     np.testing.assert_array_almost_equal(scores, model.predict(inference_data))
 
 

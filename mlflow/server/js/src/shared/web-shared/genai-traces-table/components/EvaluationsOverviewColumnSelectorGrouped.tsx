@@ -13,28 +13,28 @@ import {
   useDesignSystemTheme,
   DialogComboboxOptionListSearch,
   DangerIcon,
+  Tag,
 } from '@databricks/design-system';
 import { FormattedMessage, useIntl } from '@databricks/i18n';
 
 import { sortGroupedColumns } from '../GenAiTracesTable.utils';
 import { TracesTableColumnGroup, TracesTableColumnGroupToLabelMap, type TracesTableColumn } from '../types';
-import { COLUMN_SELECTOR_DROPDOWN_COMPONENT_ID } from '../utils/EvaluationLogging';
 
 interface Props {
   columns: TracesTableColumn[];
   selectedColumns: TracesTableColumn[];
   toggleColumns: (cols: TracesTableColumn[]) => void;
   setSelectedColumns: (cols: TracesTableColumn[]) => void;
-  isMetadataLoading?: boolean;
-  metadataError?: Error | null;
+  isLoading?: boolean;
+  isError?: boolean;
+  disabled?: boolean;
 }
 
 const OPTION_HEIGHT = 32;
 
 const getGroupLabel = (group: string): string => {
-  return group === TracesTableColumnGroup.INFO
-    ? 'Attributes'
-    : TracesTableColumnGroupToLabelMap[group as TracesTableColumnGroup];
+  if (group === TracesTableColumnGroup.BASE) return 'Base Attributes';
+  return TracesTableColumnGroupToLabelMap[group as TracesTableColumnGroup];
 };
 
 /**
@@ -45,8 +45,9 @@ export const EvaluationsOverviewColumnSelectorGrouped: React.FC<React.PropsWithC
   selectedColumns = [],
   toggleColumns,
   setSelectedColumns,
-  isMetadataLoading = false,
-  metadataError,
+  isLoading,
+  isError,
+  disabled,
 }) => {
   const intl = useIntl();
   const { theme } = useDesignSystemTheme();
@@ -111,12 +112,17 @@ export const EvaluationsOverviewColumnSelectorGrouped: React.FC<React.PropsWithC
   };
 
   return (
-    <DialogCombobox componentId={COLUMN_SELECTOR_DROPDOWN_COMPONENT_ID} label="Columns" multiSelect>
+    <DialogCombobox
+      componentId="mlflow.evaluations_overview_grouped.column_selector_dropdown"
+      label="Columns"
+      multiSelect
+    >
       <DialogComboboxCustomButtonTriggerWrapper>
         <Button
           endIcon={<ChevronDownIcon />}
           data-testid="column-selector-button"
           componentId="mlflow.evaluations_review.table_ui.filter_button"
+          disabled={disabled}
         >
           <div
             css={{
@@ -128,19 +134,21 @@ export const EvaluationsOverviewColumnSelectorGrouped: React.FC<React.PropsWithC
             <ColumnsIcon />
             {intl.formatMessage({
               defaultMessage: 'Columns',
-              description: 'Evaluation review > evaluations list > filter dropdown button',
+              description: 'Evaluation review > evaluations list > column selector button',
             })}
+            <Tag componentId="mlflow.evaluations_review.column_count">
+              {selectedColumns.length}/{columns.length}
+            </Tag>
           </div>
         </Button>
       </DialogComboboxCustomButtonTriggerWrapper>
-
       <DialogComboboxContent
         maxHeight={OPTION_HEIGHT * 15.5}
         minWidth={300}
         maxWidth={500}
-        loading={isMetadataLoading && !metadataError}
+        loading={isLoading && !isError}
       >
-        {metadataError ? (
+        {isError ? (
           <div
             css={{
               display: 'flex',

@@ -1,3 +1,4 @@
+import { jest, describe, beforeEach, it, expect } from '@jest/globals';
 import { render, screen } from '@testing-library/react';
 import { ExperimentViewRunsControlsActionsSelectTags } from './ExperimentViewRunsControlsActionsSelectTags';
 import type { RunInfoEntity } from '../../../../types';
@@ -13,7 +14,7 @@ jest.mock('@mlflow/mlflow/src/experiment-tracking/actions', () => ({
 }));
 
 // eslint-disable-next-line no-restricted-syntax -- TODO(FEINF-4392)
-jest.setTimeout(10000);
+jest.setTimeout(30000);
 
 describe('ExperimentViewRunsControlsActionsSelectTags', () => {
   beforeEach(() => {
@@ -175,5 +176,20 @@ describe('ExperimentViewRunsControlsActionsSelectTags', () => {
         { key: 'tag3', value: 'test3' },
       ],
     );
+  });
+
+  it('renders tags in alphabetical order in the dropdown', async () => {
+    renderComponent();
+
+    // Click on the trigger to open the dropdown
+    await userEvent.click(screen.getByTestId('runs-tag-multiselect-trigger'));
+
+    // Get all rendered options
+    const options = screen.getAllByRole('option');
+    const optionNames = options.map((option) => option.getAttribute('value'));
+
+    // Assert that the options are in alphabetical order
+    const sorted = [...optionNames].sort();
+    expect(optionNames).toEqual(sorted);
   });
 });

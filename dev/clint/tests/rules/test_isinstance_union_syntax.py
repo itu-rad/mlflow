@@ -1,11 +1,12 @@
 from pathlib import Path
 
 from clint.config import Config
-from clint.linter import Location, lint_file
+from clint.index import SymbolIndex
+from clint.linter import Position, Range, lint_file
 from clint.rules import IsinstanceUnionSyntax
 
 
-def test_isinstance_union_syntax(index_path: Path) -> None:
+def test_isinstance_union_syntax(index: SymbolIndex) -> None:
     code = """
 # Bad - basic union syntax
 isinstance(obj, str | int)
@@ -34,10 +35,10 @@ isinstance()
 isinstance(obj)
 """
     config = Config(select={IsinstanceUnionSyntax.name})
-    results = lint_file(Path("test.py"), code, config, index_path)
+    results = lint_file(Path("test.py"), code, config, index)
     assert all(isinstance(r.rule, IsinstanceUnionSyntax) for r in results)
-    assert [r.loc for r in results] == [
-        Location(2, 0),
-        Location(3, 0),
-        Location(6, 0),
+    assert [r.range for r in results] == [
+        Range(Position(2, 0)),
+        Range(Position(3, 0)),
+        Range(Position(6, 0)),
     ]

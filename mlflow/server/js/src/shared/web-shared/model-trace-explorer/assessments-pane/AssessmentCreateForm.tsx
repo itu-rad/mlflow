@@ -10,7 +10,7 @@ import {
   useDesignSystemTheme,
 } from '@databricks/design-system';
 import { FormattedMessage } from '@databricks/i18n';
-import { getUser } from '@databricks/web-shared/global-settings';
+import { getUser } from '../../global-settings/getUser';
 
 import { AssessmentCreateNameTypeahead } from './AssessmentCreateNameTypeahead';
 import type { AssessmentFormInputDataType } from './AssessmentsPane.utils';
@@ -22,6 +22,7 @@ import { TextInput } from './components/TextInput';
 import type { AssessmentValueInputFieldProps } from './components/types';
 import type { CreateAssessmentPayload } from '../api';
 import type { AssessmentSchema } from '../contexts/AssessmentSchemaContext';
+import { useAssessmentSchemas } from '../contexts/AssessmentSchemaContext';
 import { useCreateAssessment } from '../hooks/useCreateAssessment';
 
 const ComponentMap: Record<AssessmentFormInputDataType, React.ComponentType<AssessmentValueInputFieldProps>> = {
@@ -33,15 +34,18 @@ const ComponentMap: Record<AssessmentFormInputDataType, React.ComponentType<Asse
 
 type AssessmentCreateFormProps = {
   assessmentName?: string;
+  assessmentType: 'feedback' | 'expectation';
   spanId?: string;
   traceId: string;
   setExpanded: (expanded: boolean) => void;
 };
 
 export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateFormProps>(
+  // eslint-disable-next-line react-component-name/react-component-name -- TODO(FEINF-4716)
   (
     {
       assessmentName,
+      assessmentType,
       spanId,
       traceId,
       // used to close the form
@@ -51,9 +55,9 @@ export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateF
     ref,
   ) => {
     const { theme } = useDesignSystemTheme();
+    const { schemas } = useAssessmentSchemas();
 
     const [name, setName] = useState('');
-    const [assessmentType, setAssessmentType] = useState<'feedback' | 'expectation'>('feedback');
     const [dataType, setDataType] = useState<AssessmentFormInputDataType>('boolean');
     const [value, setValue] = useState<string | boolean | number>(true);
     const [rationale, setRationale] = useState('');
@@ -131,36 +135,52 @@ export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateF
       createAssessmentMutation,
     ]);
 
-    const handleChangeSchema = useCallback((schema: AssessmentSchema | null) => {
-      // clear the form back to defaults
-      if (!schema) {
-        setName('');
-        setAssessmentType('feedback');
-        setDataType('boolean');
-        setValue(true);
-        setRationale('');
-        setValueError(null);
-        return;
-      }
-
-      setName(schema.name);
-      setAssessmentType(schema.assessmentType);
-      setDataType(schema.dataType);
-
-      // set the appropriate empty value for the data type
-      switch (schema.dataType) {
-        case 'string':
-        case 'json':
-          setValue('');
-          break;
-        case 'number':
-          setValue(0);
-          break;
-        case 'boolean':
+    const handleChangeSchema = useCallback(
+      (schema: AssessmentSchema | null) => {
+        // clear the form back to defaults
+        if (!schema) {
+          setName('');
+          setDataType('boolean');
           setValue(true);
-          break;
-      }
-    }, []);
+          setRationale('');
+          setValueError(null);
+          return;
+        }
+
+        // Check if this is a real schema from the schemas list or a fake one created for a new name
+        const isRealSchema = schemas.some((s) => s.name === schema.name);
+
+        // Only update the name if it's a new assessment name (not in schemas)
+        // This preserves the user's selections for data type
+        if (!isRealSchema) {
+          setName(schema.name);
+          return;
+        }
+
+        // For existing schemas, update all fields
+        setName(schema.name);
+
+        // Clamp data type: JSON is only valid for expectations, fall back to string for feedback
+        const effectiveDataType =
+          schema.dataType === 'json' && assessmentType === 'feedback' ? 'string' : schema.dataType;
+        setDataType(effectiveDataType);
+
+        // set the appropriate empty value for the data type
+        switch (effectiveDataType) {
+          case 'string':
+          case 'json':
+            setValue('');
+            break;
+          case 'number':
+            setValue(0);
+            break;
+          case 'boolean':
+            setValue(true);
+            break;
+        }
+      },
+      [schemas, assessmentType],
+    );
 
     return (
       <div
@@ -169,46 +189,13 @@ export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateF
           display: 'flex',
           flexDirection: 'column',
           gap: theme.spacing.xs,
-          marginTop: theme.spacing.sm,
           border: `1px solid ${theme.colors.border}`,
           padding: theme.spacing.sm,
           borderRadius: theme.borders.borderRadiusSm,
         }}
       >
         <Typography.Text size="sm" color="secondary">
-          <FormattedMessage
-            defaultMessage="Assessment Type"
-            description="Field label for assessment type in a creation form"
-          />
-        </Typography.Text>
-        <SimpleSelect
-          id="shared.model-trace-explorer.assessment-type-select"
-          componentId="shared.model-trace-explorer.assessment-type-select"
-          value={assessmentType}
-          disabled={isLoading}
-          onChange={(e) => {
-            setAssessmentType(e.target.value as 'feedback' | 'expectation');
-            // JSON data is not available for feedback
-            if (e.target.value === 'feedback' && dataType === 'json') {
-              setDataType('string');
-            }
-          }}
-        >
-          <SimpleSelectOption value="feedback">
-            <FormattedMessage defaultMessage="Feedback" description="Feedback select menu option for assessment type" />
-          </SimpleSelectOption>
-          <SimpleSelectOption value="expectation">
-            <FormattedMessage
-              defaultMessage="Expectation"
-              description="Expectation select menu option for assessment type"
-            />
-          </SimpleSelectOption>
-        </SimpleSelect>
-        <Typography.Text css={{ marginTop: theme.spacing.xs }} size="sm" color="secondary">
-          <FormattedMessage
-            defaultMessage="Assessment Name"
-            description="Field label for assessment name in a creation form"
-          />
+          <FormattedMessage defaultMessage="Name" description="Field label for assessment name in a creation form" />
         </Typography.Text>
         {isNamePrefilled ? (
           <Typography.Text>{assessmentName}</Typography.Text>
@@ -219,6 +206,7 @@ export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateF
             handleChangeSchema={handleChangeSchema}
             nameError={nameError}
             setNameError={setNameError}
+            assessmentType={assessmentType}
           />
         )}
         <Typography.Text css={{ marginTop: theme.spacing.xs }} size="sm" color="secondary">
@@ -230,6 +218,7 @@ export const AssessmentCreateForm = forwardRef<HTMLDivElement, AssessmentCreateF
         <SimpleSelect
           id="shared.model-trace-explorer.assessment-data-type-select"
           componentId="shared.model-trace-explorer.assessment-data-type-select"
+          label="Data Type"
           value={dataType}
           disabled={isLoading}
           onChange={(e) => {

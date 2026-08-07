@@ -1,19 +1,40 @@
 import { isNil, uniq } from 'lodash';
 
-import { ModelTraceSpanType } from '@databricks/web-shared/model-trace-explorer';
-import type { ModelTrace, ModelTraceInfo, RetrieverDocument } from '@databricks/web-shared/model-trace-explorer';
+import type {
+  Assessment,
+  ExpectationAssessment,
+  FeedbackAssessment,
+  IssueReferenceAssessment,
+  ModelTrace,
+  ModelTraceLocation,
+  ModelTraceOtelAnyValue,
+  ModelTraceSpan,
+  ModelTraceInfoV3,
+  RetrieverDocument,
+} from '../../model-trace-explorer/ModelTrace.types';
+import { createTraceV4LongIdentifier } from '../../model-trace-explorer/ModelTraceExplorer.utils';
+import { getAssessmentValue } from '../../model-trace-explorer/assessments-pane/utils';
+import { ModelTraceSpanType } from '../../model-trace-explorer/ModelTrace.types';
 
-import { stringifyValue } from '../components/GenAiEvaluationTracesReview.utils';
+import { doesTraceSupportV4API } from './TraceLocationUtils';
+import {
+  MLFLOW_ASSESSMENT_SOURCE_RUN_ID,
+  MLFLOW_TRACE_SOURCE_SCORER_NAME_TAG,
+} from '../../model-trace-explorer/constants';
+import {
+  getEvaluationResultAssessmentValue,
+  KnownEvaluationResultAssessmentStringValue,
+  stringifyValue,
+  tryExtractUserMessageContent,
+} from '../components/GenAiEvaluationTracesReview.utils';
 import { KnownEvaluationResultAssessmentName } from '../enum';
 import { CUSTOM_METADATA_COLUMN_ID, TAGS_COLUMN_ID } from '../hooks/useTableColumns';
 import type {
   AssessmentType,
-  AssessmentV3,
   RunEvaluationResultAssessment,
   RunEvaluationResultAssessmentSource,
   RunEvaluationTracesDataEntry,
   RunEvaluationTracesRetrievalChunk,
-  TraceInfoV3,
 } from '../types';
 
 // This is the key used by the eval harness to record
@@ -27,11 +48,26 @@ export const MLFLOW_SOURCE_RUN_KEY = 'mlflow.sourceRun';
 
 export const MLFLOW_INTERNAL_PREFIX = 'mlflow.';
 
+export const DEFAULT_RUN_PLACEHOLDER_NAME = 'monitor';
+
+const SPANS_LOCATION_TAG_KEY = 'mlflow.trace.spansLocation';
+export const TRACKING_STORE_SPANS_LOCATION = 'TRACKING_STORE';
+
+/**
+ * Extracts the experiment ID from a trace location, if it is an MLflow experiment location.
+ */
+export const getExperimentIdFromTraceLocation = (location?: ModelTraceLocation): string | undefined => {
+  if (location?.type === 'MLFLOW_EXPERIMENT') {
+    return location.mlflow_experiment.experiment_id;
+  }
+  return undefined;
+};
+
 export const getRowIdFromEvaluation = (evaluation?: RunEvaluationTracesDataEntry) => {
   return evaluation?.evaluationId || '';
 };
 
-export const getRowIdFromTrace = (trace?: TraceInfoV3) => {
+export const getRowIdFromTrace = (trace?: ModelTraceInfoV3) => {
   return trace?.trace_id || '';
 };
 
@@ -51,7 +87,7 @@ export const createCustomMetadataColumnId = (metadataKey: string) => {
   return `${CUSTOM_METADATA_COLUMN_ID}:${metadataKey}`;
 };
 
-export const getTracesTagKeys = (traces: TraceInfoV3[]): string[] => {
+export const getTracesTagKeys = (traces: ModelTraceInfoV3[]): string[] => {
   return uniq(
     traces
       .map((result) => {
@@ -62,18 +98,51 @@ export const getTracesTagKeys = (traces: TraceInfoV3[]): string[] => {
 };
 
 /**
- * This is currently only used to support the edit tags flow which only requires request id + tags
+ * Filter out the traces that are not created by the given evaluation run.
+ *
+ * NB: This utility is also used for the general trace view in a Run Detail page.
+ *
+ * @param traces - The traces to filter.
+ * @param runUuid - The run UUID to filter by.
+ * @returns The filtered traces.
  */
-export const convertTraceInfoV3ToModelTraceInfo = (trace: TraceInfoV3) => {
-  const kvArray = (obj?: Record<string, string>): { key: string; value: string }[] | undefined =>
-    obj ? Object.entries(obj).map(([key, value]) => ({ key, value })) : undefined;
+export const filterTracesByAssessmentSourceRunId = (
+  traces: ModelTraceInfoV3[] | undefined,
+  runUuid?: string | null,
+): ModelTraceInfoV3[] | undefined => {
+  if (!traces || !runUuid) {
+    return traces;
+  }
 
-  const model: ModelTraceInfo = {
-    request_id: trace.client_request_id ?? trace.trace_id,
-    tags: kvArray(trace.tags),
-  };
+  return traces.reduce<ModelTraceInfoV3[]>((acc, trace) => {
+    const assessments = trace.assessments || [];
 
-  return model;
+    // Filter assessments to those that are created by this evaluation run.
+    const filteredAssessments = assessments.filter((assessment) => {
+      const sourceRunId = assessment.metadata?.[MLFLOW_ASSESSMENT_SOURCE_RUN_ID];
+      return !sourceRunId || sourceRunId === runUuid;
+    });
+
+    // Filter out the scorer traces.
+    const sourceScorerName = trace.tags?.[MLFLOW_TRACE_SOURCE_SCORER_NAME_TAG];
+    if (sourceScorerName) {
+      return acc;
+    }
+
+    // Early return to avoid the overhead of copying the trace and assessments below.
+    if (filteredAssessments.length === assessments.length) {
+      acc.push(trace);
+      return acc;
+    }
+
+    // Render only the assessments that are created by this evaluation run. This is to avoid showing
+    // feedbacks logged from other runs in the evaluation results.
+    acc.push({
+      ...trace,
+      assessments: filteredAssessments,
+    });
+    return acc;
+  }, []);
 };
 
 // This function checks if the traceInfo field is present in the first entry of the evalResults array.
@@ -90,37 +159,53 @@ const safelyParseValue = <T>(val: string): string | T => {
   }
 };
 
-export const getTraceInfoInputs = (traceInfo: TraceInfoV3) => {
+export const getTraceInfoInputs = (traceInfo: ModelTraceInfoV3) => {
   return traceInfo.request_preview || traceInfo.request || traceInfo.trace_metadata?.['mlflow.traceInputs'] || '';
 };
 
-export const getTraceInfoOutputs = (traceInfo: TraceInfoV3) => {
+export const getTraceInfoOutputs = (traceInfo: ModelTraceInfoV3) => {
   return traceInfo.response_preview || traceInfo.response || traceInfo.trace_metadata?.['mlflow.traceOutputs'] || '';
 };
 
-const isExpectationAssessment = (assessment: AssessmentV3): boolean => {
-  return Boolean(assessment.expectation);
+/**
+ * Returns the "spans location" tag value if present.
+ */
+export function getSpansLocation(traceInfo?: ModelTraceInfoV3): string | undefined {
+  return traceInfo?.tags?.[SPANS_LOCATION_TAG_KEY] || undefined;
+}
+
+const isExpectationAssessment = (assessment: Assessment): assessment is ExpectationAssessment => {
+  return Boolean('expectation' in assessment && assessment.expectation);
+};
+
+const isFeedbackAssessment = (assessment: Assessment): assessment is FeedbackAssessment => {
+  return Boolean('feedback' in assessment && assessment.feedback);
+};
+
+const isIssueReferenceAssessment = (assessment: Assessment): assessment is IssueReferenceAssessment => {
+  return Boolean('issue' in assessment && assessment.issue);
 };
 
 const LIST_TRACES_IGNORE_ASSESSMENTS = ['agent/latency_seconds'];
 
-function processExpectationAssessment(assessment: AssessmentV3, targets: Record<string, any>): void {
+function processExpectationAssessment(assessment: ExpectationAssessment, targets: Record<string, any>): void {
   const assessmentName = assessment.assessment_name;
-  const assessmentValue = assessment.expectation?.value || assessment.expectation?.serialized_value?.value;
+  const assessmentValue = getAssessmentValue(assessment);
 
-  if (Array.isArray(assessmentValue) && assessmentValue.length > 0) {
-    targets[assessmentName] = assessmentValue.map((val) => {
-      return safelyParseValue(val);
-    });
+  if (Array.isArray(assessmentValue)) {
+    // Parse string elements if possible, otherwise keep original values (booleans, numbers, objects, etc.)
+    targets[assessmentName] = assessmentValue.map((val) => (typeof val === 'string' ? safelyParseValue(val) : val));
   } else if (typeof assessmentValue === 'string') {
+    // Parse JSON-encoded strings like "true", "42", "{...}", etc.
     targets[assessmentName] = safelyParseValue(assessmentValue);
   } else {
+    // Preserve non-string primitives and objects (boolean, number, null, plain objects)
     targets[assessmentName] = assessmentValue;
   }
 }
 
 function processFeedbackAssessment(
-  assessment: AssessmentV3,
+  assessment: FeedbackAssessment,
   overallAssessments: RunEvaluationResultAssessment[],
   responseAssessmentsByName: Record<string, RunEvaluationResultAssessment[]>,
 ): void {
@@ -137,7 +222,7 @@ function processFeedbackAssessment(
   responseAssessmentsByName[assessmentName].push(evalResultAssessment);
 }
 
-const convertAssessmentV3Source = (assessment: AssessmentV3): RunEvaluationResultAssessmentSource | undefined => {
+const convertAssessmentV3Source = (assessment: Assessment): RunEvaluationResultAssessmentSource | undefined => {
   if (!assessment.source?.source_type) {
     return undefined;
   }
@@ -147,7 +232,7 @@ const convertAssessmentV3Source = (assessment: AssessmentV3): RunEvaluationResul
   if (sourceType === 'LLM_JUDGE') {
     runEvalSourceType = 'AI_JUDGE';
   } else {
-    runEvalSourceType = sourceType;
+    runEvalSourceType = sourceType as AssessmentType;
   }
 
   return {
@@ -157,7 +242,9 @@ const convertAssessmentV3Source = (assessment: AssessmentV3): RunEvaluationResul
   };
 };
 
-const convertFeedbackAssessmentToRunEvalAssessment = (assessment: AssessmentV3): RunEvaluationResultAssessment => {
+export const convertFeedbackAssessmentToRunEvalAssessment = (
+  assessment: FeedbackAssessment,
+): RunEvaluationResultAssessment => {
   const assessmentValue = assessment.feedback?.value;
   const isOverallAssessment = assessment.assessment_name === KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT;
   const source = convertAssessmentV3Source(assessment);
@@ -181,25 +268,88 @@ const convertFeedbackAssessmentToRunEvalAssessment = (assessment: AssessmentV3):
   };
 };
 
-export const convertTraceInfoV3ToRunEvalEntry = (traceInfo: TraceInfoV3): RunEvaluationTracesDataEntry => {
+// Name of the synthetic per-test "Result" assessment used by the regression-test
+// view. Kept here so the data layer, the cell renderer, and the detail drawer
+// agree on the single column name.
+export const RESULT_ASSESSMENT_NAME = 'Result';
+
+// `mlflow.runType` tag value for an @mlflow.test regression-test run. The table
+// enters regression-test mode when the caller passes this run type.
+export const REGRESSION_TEST_RUN_TYPE = 'test';
+
+/**
+ * Read an `mlflow.*` tag from a trace info, tolerating both the tracking-store
+ * array-of-`{key, value}` shape and the trace-server record / `trace_metadata`
+ * shapes.
+ */
+export const readTraceTag = (info: any, key: string): string | undefined => {
+  const tags = info?.tags;
+  if (Array.isArray(tags)) return tags.find((t: any) => t?.key === key)?.value;
+  if (tags && typeof tags === 'object' && tags[key] != null) return String(tags[key]);
+  const meta = info?.trace_metadata?.[key];
+  return meta != null ? String(meta) : undefined;
+};
+
+export const convertTraceInfoV3ToRunEvalEntry = (
+  traceInfo: ModelTraceInfoV3,
+  options?: { synthesizeResult?: boolean },
+): RunEvaluationTracesDataEntry => {
   const evaluationId = getRowIdFromTrace(traceInfo);
 
   // Prepare containers for our assessments.
   const overallAssessments: RunEvaluationResultAssessment[] = [];
   const responseAssessmentsByName: Record<string, RunEvaluationResultAssessment[]> = {};
   const targets: Record<string, any> = {};
+  const issues: { id: string; name: string }[] = [];
 
   traceInfo.assessments?.forEach((assessment) => {
     const assessmentName = assessment.assessment_name;
+
     if (LIST_TRACES_IGNORE_ASSESSMENTS.includes(assessmentName)) {
       return;
     }
+
+    if (assessment.valid === false) {
+      return;
+    }
+
     if (isExpectationAssessment(assessment)) {
       processExpectationAssessment(assessment, targets);
-    } else {
+    } else if (isFeedbackAssessment(assessment)) {
       processFeedbackAssessment(assessment, overallAssessments, responseAssessmentsByName);
+    } else if (isIssueReferenceAssessment(assessment)) {
+      const issueName = assessment.issue.issue_name || assessmentName;
+      // assessmentName is the issue_id
+      issues.push({ id: assessmentName, name: issueName });
     }
   });
+
+  // Synthesize a single "Result" assessment per trace (pass iff all assertions
+  // pass), rendered as one pass-fail column. Gated behind `synthesizeResult`.
+  if (options?.synthesizeResult) {
+    const scorerResults = Object.entries(responseAssessmentsByName)
+      .filter(([name]) => name !== KnownEvaluationResultAssessmentName.OVERALL_ASSESSMENT)
+      // Count every assertion (a scorer name can carry multiple), so the N/M
+      // header count matches the per-assertion hover-card breakdown.
+      .flatMap(([, arr]) => arr)
+      .filter(Boolean);
+    if (scorerResults.length > 0) {
+      const passedCount = scorerResults.filter((a) => {
+        const value = getEvaluationResultAssessmentValue(a);
+        return value === KnownEvaluationResultAssessmentStringValue.YES || value === true;
+      }).length;
+      responseAssessmentsByName[RESULT_ASSESSMENT_NAME] = [
+        {
+          name: RESULT_ASSESSMENT_NAME,
+          // 'yes'/'no' so the column is treated as a pass-fail assessment.
+          stringValue: passedCount === scorerResults.length ? 'yes' : 'no',
+          rationale: `${passedCount}/${scorerResults.length} assertions passed`,
+          source: scorerResults[0].source,
+          timestamp: scorerResults[0].timestamp,
+        },
+      ];
+    }
+  }
 
   // trace server has input/output in request/response field, and mlflow tracking server has it in the metadata
   const rawInputs = getTraceInfoInputs(traceInfo);
@@ -211,12 +361,14 @@ export const convertTraceInfoV3ToRunEvalEntry = (traceInfo: TraceInfoV3): RunEva
   try {
     inputs = JSON.parse(rawInputs);
 
-    // Try to parse OpenAI messages
+    // Try to parse OpenAI messages first (most common case)
     const messages = inputs['messages'];
     if (Array.isArray(messages) && !isNil(messages[0]?.content)) {
       inputsTitle = messages[messages.length - 1]?.content;
     } else {
-      inputsTitle = stringifyValue(inputs);
+      // Try to extract user message content from various chat formats (openai, langchain, anthropic)
+      const extractedContent = tryExtractUserMessageContent(inputs);
+      inputsTitle = extractedContent ?? stringifyValue(inputs);
     }
   } catch {
     inputs = {
@@ -241,11 +393,14 @@ export const convertTraceInfoV3ToRunEvalEntry = (traceInfo: TraceInfoV3): RunEva
     responseAssessmentsByName,
     metrics: {},
     traceInfo,
+    fullTraceId: createTraceV4LongIdentifier(traceInfo),
+    issues: issues.length > 0 ? issues : undefined,
   };
 };
 
 export const applyTraceInfoV3ToEvalEntry = (
   evalResults: RunEvaluationTracesDataEntry[],
+  options?: { synthesizeResult?: boolean },
 ): RunEvaluationTracesDataEntry[] => {
   if (!shouldUseTraceInfoV3(evalResults)) {
     return evalResults;
@@ -255,7 +410,7 @@ export const applyTraceInfoV3ToEvalEntry = (
       return result;
     }
     // Convert the single TraceInfo to a single RunEvaluationTracesDataEntry
-    const converted = convertTraceInfoV3ToRunEvalEntry(result.traceInfo);
+    const converted = convertTraceInfoV3ToRunEvalEntry(result.traceInfo, options);
     // Merge the newly converted fields with the existing data
     return {
       ...result,
@@ -305,15 +460,15 @@ export function getRetrievedContextFromTrace(
 
   const retrievalSpans = trace.data.spans.filter(
     (span) =>
-      span.attributes?.['mlflow.spanType'] &&
-      safelyParseValue(span.attributes?.['mlflow.spanType']) === ModelTraceSpanType.RETRIEVER,
+      getSpanAttribute(span.attributes, 'mlflow.spanType') &&
+      safelyParseValue(getSpanAttribute(span.attributes, 'mlflow.spanType') as string) === ModelTraceSpanType.RETRIEVER,
   );
   if (retrievalSpans.length === 0) {
     return [];
   }
 
   // Return the last retrieval span chronologically since it is the one analyzed by our judges.
-  const spanOutputs = retrievalSpans.at(-1)?.attributes?.['mlflow.spanOutputs'];
+  const spanOutputs = getSpanAttribute(retrievalSpans.at(-1)?.attributes, 'mlflow.spanOutputs');
   if (!spanOutputs) {
     return [];
   }
@@ -348,4 +503,107 @@ const getRetrievalAssessmentsByName = (
   );
 
   return filteredResponseAssessmentsByName;
+};
+
+const OTEL_ANY_VALUE_KEYS = [
+  'string_value',
+  'bool_value',
+  'int_value',
+  'double_value',
+  'bytes_value',
+  'array_value',
+  'kvlist_value',
+] as const;
+
+/**
+ * Check whether a value looks like an OTLP AnyValue (typed attribute value
+ * returned by OTLP-based endpoints such as V3 traces/get and V4 batchGet).
+ */
+export const isOtelAnyValue = (value: unknown): value is ModelTraceOtelAnyValue =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  // an empty object is how OTLP represents null, so it is a valid AnyValue
+  (Object.keys(value).length === 0 || OTEL_ANY_VALUE_KEYS.some((key) => key in value));
+
+/**
+ * Decode an OTLP AnyValue into a plain JS value. Complex values (dicts and
+ * lists, e.g. `mlflow.spanInputs` / `mlflow.spanOutputs`) arrive as nested
+ * `kvlist_value` / `array_value` structures and are decoded recursively.
+ * An unset value (e.g. a kvlist entry for a null field) decodes to null.
+ */
+export const decodeOtelAnyValue = (value: ModelTraceOtelAnyValue | undefined | null): any => {
+  if (isNil(value)) {
+    return null;
+  }
+  if (!isNil(value.string_value)) {
+    return value.string_value;
+  }
+  if (!isNil(value.bool_value)) {
+    return value.bool_value;
+  }
+  if (!isNil(value.int_value)) {
+    if (typeof value.int_value !== 'string') {
+      return value.int_value;
+    }
+    // int64 values may be serialized as strings in proto3 JSON; keep the string
+    // when the value cannot be represented exactly as a JS number
+    const parsed = Number(value.int_value);
+    return Number.isSafeInteger(parsed) ? parsed : value.int_value;
+  }
+  if (!isNil(value.double_value)) {
+    return value.double_value;
+  }
+  if (!isNil(value.bytes_value)) {
+    return value.bytes_value;
+  }
+  if (value.array_value) {
+    return (value.array_value.values ?? []).map(decodeOtelAnyValue);
+  }
+  if (value.kvlist_value) {
+    return Object.fromEntries((value.kvlist_value.values ?? []).map((kv) => [kv.key, decodeOtelAnyValue(kv.value)]));
+  }
+  return null;
+};
+
+/**
+ * Extract an attribute value from span attributes.
+ * V3 traces have flat objects: { 'mlflow.spanInputs': '{"x": 10}' }
+ * V4 traces have arrays: [{ key: 'mlflow.spanInputs', value: { string_value: '{"x":10}' } }]
+ */
+export const getSpanAttribute = (attributes: ModelTraceSpan['attributes'], attributeKey: string): any => {
+  if (!attributes) {
+    return undefined;
+  }
+
+  // V3: attributes is a flat object
+  if (!Array.isArray(attributes)) {
+    return attributes[attributeKey];
+  }
+
+  // V4: attributes is an array - find the matching key
+  const attribute = attributes.find((attr) => attr.key === attributeKey);
+  if (!attribute?.value) {
+    return undefined;
+  }
+
+  // V4 values are typed OTLP AnyValues - decode into a plain JS value
+  return decodeOtelAnyValue(attribute.value);
+};
+
+/**
+ * V4 UC traces: trace:/catalog_name.schema_name/trace_id
+ * V3 traces or others: trace_id as-is
+ * Both V3 and V4 traces have the same traceInfo schema; what's different is the trace location
+ */
+export const formatTraceId = (traceInfo: ModelTraceInfoV3 | undefined, fallbackId?: string): string => {
+  const traceId = traceInfo?.trace_id || fallbackId;
+
+  // Check if this is a V4 UC schema trace
+  // TODO: Support other trace locations
+  if (traceInfo && doesTraceSupportV4API(traceInfo)) {
+    return createTraceV4LongIdentifier(traceInfo);
+  }
+
+  return traceId || '';
 };

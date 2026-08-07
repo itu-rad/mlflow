@@ -6,16 +6,20 @@ import pytest
 
 from mlflow.environment_variables import MLFLOW_TRACKING_URI
 from mlflow.store._unity_catalog.registry.rest_store import UcModelRegistryStore
+from mlflow.store._unity_catalog.registry.uc_native_rest_store import UcNativeModelRegistryStore
 from mlflow.store.db.db_types import DATABASE_ENGINES
 from mlflow.store.model_registry.rest_store import RestStore
 from mlflow.store.model_registry.sqlalchemy_store import SqlAlchemyStore
 from mlflow.tracking._model_registry.utils import (
+    _get_databricks_uc_rest_store,
     _get_store,
     _resolve_registry_uri,
     get_registry_uri,
     set_registry_uri,
 )
 from mlflow.tracking.registry import UnsupportedModelRegistryStoreURIException
+
+from tests.helpers.db_mocks import mock_get_managed_session_maker
 
 # Disable mocking tracking URI here, as we want to test setting the tracking URI via
 # environment variable. See
@@ -84,7 +88,6 @@ def test_default_get_registry_uri_with_databricks_tracking_uri_defaults_to_uc():
     ],
 )
 def test_default_registry_uri_non_databricks_tracking_uri(tracking_uri):
-    """Test that non-databricks tracking URIs are used directly as registry URI"""
     with mock.patch(
         "mlflow.tracking._tracking_service.utils.get_tracking_uri"
     ) as get_tracking_uri_mock:
@@ -108,7 +111,6 @@ def test_default_registry_uri_non_databricks_tracking_uri(tracking_uri):
     ],
 )
 def test_databricks_tracking_uri_variations_default_to_uc(tracking_uri, expected_registry_uri):
-    """Test that various databricks tracking URI formats default to databricks-uc"""
     with mock.patch(
         "mlflow.tracking._tracking_service.utils.get_tracking_uri"
     ) as get_tracking_uri_mock:
@@ -120,7 +122,6 @@ def test_databricks_tracking_uri_variations_default_to_uc(tracking_uri, expected
 
 
 def test_explicit_registry_uri_overrides_databricks_default():
-    """Test that explicitly set registry URI takes precedence over databricks default"""
     tracking_uri = "databricks://workspace"
     explicit_registry_uri = "databricks://different_workspace"
 
@@ -135,7 +136,6 @@ def test_explicit_registry_uri_overrides_databricks_default():
 
 
 def test_registry_uri_from_environment_overrides_databricks_default():
-    """Test that registry URI from environment variable overrides databricks default"""
     from mlflow.environment_variables import MLFLOW_REGISTRY_URI
 
     tracking_uri = "databricks://workspace"
@@ -208,7 +208,6 @@ def test_edge_cases_for_databricks_uri_detection(tracking_uri, expected_result):
 def test_resolve_registry_uri_consistency_with_get_registry_uri(
     tracking_uri, registry_uri_param, expected_result
 ):
-    """Test that _resolve_registry_uri behaves consistently with get_registry_uri"""
     with mock.patch(
         "mlflow.tracking._model_registry.utils._resolve_tracking_uri"
     ) as mock_resolve_tracking:
@@ -284,7 +283,13 @@ def test_get_store_sqlalchemy_store(db_type, monkeypatch):
     monkeypatch.delenv("MLFLOW_SQLALCHEMYSTORE_POOLCLASS", raising=False)
     with (
         mock.patch("sqlalchemy.create_engine") as mock_create_engine,
+        mock.patch("sqlalchemy.event.listens_for"),
         mock.patch("mlflow.store.db.utils._initialize_tables"),
+        mock.patch("mlflow.store.model_registry.sqlalchemy_store._all_tables_exist"),
+        mock.patch(
+            "mlflow.store.model_registry.sqlalchemy_store._get_managed_session_maker",
+            new=mock_get_managed_session_maker,
+        ),
         mock.patch(
             "mlflow.store.model_registry.sqlalchemy_store.SqlAlchemyStore."
             "_verify_registry_tables_exist"
@@ -325,6 +330,20 @@ def test_get_store_caches_on_store_uri(tmp_path):
 @pytest.mark.parametrize("store_uri", ["databricks-uc", "databricks-uc://profile"])
 def test_get_store_uc_registry_uri(store_uri):
     assert isinstance(_get_store(store_uri), UcModelRegistryStore)
+
+
+def test_databricks_uc_store_defaults_to_legacy(monkeypatch):
+    monkeypatch.delenv("MLFLOW_ENABLE_UC_NATIVE_MODEL_REGISTRY", raising=False)
+    store = _get_databricks_uc_rest_store("databricks-uc", "databricks-uc")
+    assert type(store) is UcModelRegistryStore
+
+
+def test_databricks_uc_store_selects_native_when_enabled(monkeypatch):
+    monkeypatch.setenv("MLFLOW_ENABLE_UC_NATIVE_MODEL_REGISTRY", "true")
+    store = _get_databricks_uc_rest_store("databricks-uc", "databricks-uc")
+    assert type(store) is UcNativeModelRegistryStore
+    # The native store is a subclass of the legacy store (shared prompt / helper behavior).
+    assert isinstance(store, UcModelRegistryStore)
 
 
 def test_store_object_can_be_serialized_by_pickle():

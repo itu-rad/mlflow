@@ -64,6 +64,7 @@ MLflow is currently maintained by the following core members with significant co
 - [Yuki Watanabe](https://github.com/B-Step62)
 - [Daniel Lok](https://github.com/daniellok-db)
 - [Tomu Hirata](https://github.com/TomeHirata)
+- [Matt Prahl](https://github.com/mprahl)
 - [Gabriel Fu](https://github.com/gabrielfu)
 
 ## Contribution process
@@ -357,7 +358,7 @@ If you plan on doing development and testing, you will also need to
 install the following into the conda environment:
 
 ```bash
-pip install -r requirements/dev-requirements.txt
+pip install -r requirements/test-requirements.txt
 pip install -e '.[extras]'  # installs mlflow from current checkout
 pip install -e tests/resources/mlflow-test-plugin # installs `mlflow-test-plugin` that is required for running certain MLflow tests
 ```
@@ -421,7 +422,7 @@ Distributable Artifact](#building-a-distributable-artifact).
 In one shell:
 
 ```bash
-mlflow ui
+mlflow server
 ```
 
 And in another shell:
@@ -459,12 +460,6 @@ $ yarn start
 ...
 
 (UI should now be visible at localhost:3000)
-```
-
-#### Launching MLflow UI with MLflow AI Gateway for PromptLab
-
-```sh
-python dev/server.py
 ```
 
 #### Testing a React Component
@@ -595,8 +590,8 @@ in a new file prefixed with `test_` so that `pytest` includes that file
 for testing.
 
 If your tests require usage of a tracking URI, the [pytest
-fixture](https://docs.pytest.org/en/3.2.1/fixture.html)
-[tracking_uri_mock](https://github.com/mlflow/mlflow/blob/master/tests/conftest.py#L74)
+fixture](https://docs.pytest.org/en/stable/explanation/fixtures.html)
+[`tracking_uri_mock`](https://github.com/mlflow/mlflow/blob/42c02c800a827fc1c78308ff017c31145143b52e/tests/conftest.py#L542)
 is automatically set up for every tests. It sets up a mock tracking URI
 that will set itself up before your test runs and tear itself down
 after.
@@ -801,11 +796,7 @@ For instructions on how to build the API docs, please check the [README.md](http
 
 The main MLflow docs (e.g. feature docs, tutorials, etc) are written using [Docusaurus](https://docusaurus.io/). The only prerequisite for building these docs is NodeJS >= 18.0. Please check out the [official NodeJS docs](https://nodejs.org/en/download) for platform-specific installation instructions.
 
-To get started, simply run `yarn && yarn start` from the [`docs/`](https://github.com/mlflow/mlflow/blob/master/docs/) folder. This will spin up a development server that can be viewed at `http://localhost:3000/` (by default). The source files (primarily `.MDX`) are located in the [`docs/docs/`](https://github.com/mlflow/mlflow/blob/master/docs/docs/) subfolder. Changes to these files should be automatically reflected in the development server!
-
-There are also some `.ipynb` files which serve as the source for some of our tutorials. These are converted to MDX via a custom script (`yarn convert-notebooks`). If you want to make changes to these, you will need to install the `nbconvert` Python package in order to preview your changes.
-
-For more detailed information, please check the [README.md](https://github.com/mlflow/mlflow/blob/master/docs/README.md) in the `docs/` folder. We're looking forward to your contributions!
+Please check the [README.md](https://github.com/mlflow/mlflow/blob/master/docs/README.md) in the `docs/` folder to get started. We're looking forward to your contributions!
 
 ### Sign your work
 

@@ -6,12 +6,13 @@ across multiple judge tools for consistent data representation.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
+from mlflow.entities.assessment import FeedbackValueType
 from mlflow.entities.span_status import SpanStatus
-from mlflow.utils.annotations import experimental
+from mlflow.entities.trace_state import TraceState
 
 
-@experimental(version="3.4.0")
 @dataclass
 class SpanResult:
     """Result from getting span content."""
@@ -23,7 +24,6 @@ class SpanResult:
     error: str | None = None
 
 
-@experimental(version="3.4.0")
 @dataclass
 class SpanInfo:
     """Information about a single span."""
@@ -38,3 +38,45 @@ class SpanInfo:
     status: SpanStatus
     is_root: bool
     attribute_names: list[str]
+
+
+@dataclass
+class JudgeToolExpectation:
+    """Expectation for a trace (simplified for judge tools)."""
+
+    name: str
+    source: str
+    rationale: str | None
+    span_id: str | None
+    assessment_id: str | None
+    value: Any
+
+
+@dataclass
+class JudgeToolFeedback:
+    """Feedback for a trace (simplified for judge tools)."""
+
+    name: str
+    source: str
+    rationale: str | None
+    span_id: str | None
+    assessment_id: str | None
+    value: FeedbackValueType | None
+    error_code: str | None
+    error_message: str | None
+    stack_trace: str | None
+    overrides: str | None
+    valid: bool | None
+
+
+@dataclass
+class JudgeToolTraceInfo:
+    """Information about a single trace (simplified for judge tools)."""
+
+    trace_id: str
+    request_time: int
+    state: TraceState
+    request: str | None
+    response: str | None
+    execution_duration: int | None
+    assessments: list[JudgeToolExpectation | JudgeToolFeedback]
