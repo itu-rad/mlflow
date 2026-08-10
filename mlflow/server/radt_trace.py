@@ -19,6 +19,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import TrackEvent
+from perfetto.trace_builder.proto_builder import TraceProtoBuilder
+
 _logger = logging.getLogger(__name__)
 
 #: Written by radt's batch exporter; mirrored from ``radt.run.trace``.
@@ -205,15 +208,6 @@ def _read_metrics(store, run):
 
 def build_pftrace(spans, metrics):
     """Serialise normalised spans + metric series into a Perfetto trace."""
-    try:
-        from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import TrackEvent
-        from perfetto.trace_builder.proto_builder import TraceProtoBuilder
-    except ImportError as exc:
-        raise RadtTraceError(
-            "Perfetto trace export requires the 'perfetto' package. "
-            "Install MLflow with the 'radt' extra to enable it."
-        ) from exc
-
     builder = TraceProtoBuilder()
 
     # Tracks are laid out in the order their first span starts, so the timeline

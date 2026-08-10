@@ -50,6 +50,7 @@ dependencies = [
   "opentelemetry-sdk<3,>=1.9.0",
   "packaging<27",
   "pandas<4",
+  "perfetto<1",
   "protobuf<8,>=3.12.0",
   "pyarrow<26,>=4.0.0",
   "pydantic<3,>=2.0.0",
@@ -86,9 +87,6 @@ extras = [
   "prometheus-flask-exporter",
 ]
 db = ["PyMySQL", "psycopg2-binary", "pymssql"]
-# radT fork: server-side Perfetto trace export. Kept optional so the base wheel
-# is unchanged; the radT page reports a clear error when it is missing.
-radt = ["perfetto"]
 databricks = [
   "azure-storage-file-datalake>12",
   "google-cloud-storage>=1.30.0",

@@ -3,14 +3,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import Trace, TrackEvent
 
 from mlflow.entities import Metric
 from mlflow.server import radt_trace
 from mlflow.server.radt_trace import RadtTraceError, _Span, build_pftrace
 from mlflow.store.artifact.local_artifact_repo import LocalArtifactRepository
-
-perfetto = pytest.importorskip("perfetto", reason="perfetto is an optional 'radt' extra")
-from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import Trace, TrackEvent
 
 
 def parse(payload):

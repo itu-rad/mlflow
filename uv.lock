@@ -2537,7 +2537,7 @@ name = "gunicorn"
 version = "26.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging" },
+    { name = "packaging", marker = "python_full_version < '3.11' or sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/b7/a4a3f632f823e432ce6bc65f62961b7980c898c77f075a2f7118cb3846fe/gunicorn-26.0.0.tar.gz", hash = "sha256:ca9346f85e3a4aeeb64d491045c16b9a35647abd37ea15efe53080eb8b090baf", size = 727286, upload-time = "2026-05-05T06:38:25.529Z" }
 wheels = [
@@ -4083,6 +4083,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "perfetto" },
     { name = "protobuf" },
     { name = "pyarrow" },
     { name = "pydantic" },
@@ -4331,6 +4332,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.9.0,<3" },
     { name = "packaging", specifier = "<27" },
     { name = "pandas", specifier = "<4" },
+    { name = "perfetto", specifier = "<1" },
     { name = "prometheus-flask-exporter", marker = "extra == 'extras'" },
     { name = "protobuf", specifier = ">=3.12.0,<8" },
     { name = "psycopg2-binary", marker = "extra == 'db'" },
@@ -5756,6 +5758,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ca/bc/f35b8446f4531a7cb215605d100cd88b7ac6f44ab3fc94870c120ab3adbf/pathspec-0.12.1.tar.gz", hash = "sha256:a482d51503a1ab33b1c67a6c3813a26953dbdc71c31dacaef9a838c4e29f5712", size = 51043, upload-time = "2023-12-10T22:30:45Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl", hash = "sha256:a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08", size = 31191, upload-time = "2023-12-10T22:30:43.14Z" },
+]
+
+[[package]]
+name = "perfetto"
+version = "0.57.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/27/aa614680b7355a6bc724e8f2b6085cb263c3dbb81f3dd7ed9d8e5c9cfcd0/perfetto-0.57.2.tar.gz", hash = "sha256:4029b3da0f3dbb687ba16f70b10761b097f3cd2bf256cd6f251b878464cc8e39", size = 323920, upload-time = "2026-07-07T16:27:34.538Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/59/7252b92e3e5738a6bf88e4579007b7df4c8995f0c95b75e3682473d2153b/perfetto-0.57.2-py3-none-any.whl", hash = "sha256:307896cee046778e632b4361a704417ad1ecd6f48b07da0a6178681f919311fa", size = 342189, upload-time = "2026-07-07T16:27:33.107Z" },
 ]
 
 [[package]]
