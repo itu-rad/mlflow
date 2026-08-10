@@ -2367,6 +2367,10 @@
     "defaultMessage": "3. Access the MLflow UI",
     "description": "Section title explaining how to access traces in the MLflow UI"
   },
+  "8twa7X": {
+    "defaultMessage": "Open this run's trace in the Perfetto UI",
+    "description": "Tooltip for the open trace button when a trace already exists"
+  },
   "8v0vur": {
     "defaultMessage": "Archive after: {retention}",
     "description": "Badge showing the active trace archival retention for the experiment"
@@ -2438,6 +2442,10 @@
   "98v9a0": {
     "defaultMessage": "The guidelines LLM judge determines whether the response adheres to the guidelines provided. All responses must adhere to guidelines.",
     "description": "Evaluation results > known type of evaluation result assessment > guidelines judge."
+  },
+  "99e1sj": {
+    "defaultMessage": "Could not open the trace.",
+    "description": "Generic error when opening a radT trace fails"
   },
   "9AfxK7": {
     "defaultMessage": "Goal",
@@ -3651,6 +3659,10 @@
     "defaultMessage": "Edit budget policy",
     "description": "Gateway > Budgets list > Edit budget policy button aria label"
   },
+  "EGnJGB": {
+    "defaultMessage": "Open trace",
+    "description": "Button opening a run's trace in the Perfetto UI"
+  },
   "EI7moF": {
     "defaultMessage": "Last year",
     "description": "Option for the start select dropdown to filter runs since the last 1 year"
@@ -3982,6 +3994,10 @@
   "FpjDSq": {
     "defaultMessage": "Compare",
     "description": "Text for compare button to compare versions under details tab\n                       on the model view page"
+  },
+  "Frss2o": {
+    "defaultMessage": "Could not open the Perfetto UI. Allow pop-ups for this site and try again.",
+    "description": "Error shown when the browser blocks the Perfetto tab"
   },
   "Fs6pF+": {
     "defaultMessage": "Create Role",
@@ -5182,6 +5198,10 @@
   "LTbwXS": {
     "defaultMessage": "Artifact evaluation",
     "description": "A tooltip for the view mode switcher in the experiment view, corresponding to artifact evaluation view"
+  },
+  "LVAzFz": {
+    "defaultMessage": "Build this run's Perfetto trace and open it. This may take a moment for large runs.",
+    "description": "Tooltip for the open trace button when the trace must be built first"
   },
   "LWkwgO": {
     "defaultMessage": "Added {count, plural, one {# trace} other {# traces}} to review.",
@@ -12382,6 +12402,10 @@
   "q0fV0H": {
     "defaultMessage": "Latency",
     "description": "Issue category title for latency"
+  },
+  "q1JSEE": {
+    "defaultMessage": "Generate trace",
+    "description": "Button building a run's trace before opening it in the Perfetto UI"
   },
   "q1okqz": {
     "defaultMessage": "Registry URL",

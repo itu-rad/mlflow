@@ -7,6 +7,7 @@ import type { KeyValueEntity } from '../../../common/types';
 import { RunViewModeSwitch, type RunViewModeSwitchProps } from './RunViewModeSwitch';
 import Utils from '../../../common/utils/Utils';
 import { RunViewHeaderRegisterModelButton } from './RunViewHeaderRegisterModelButton';
+import { RunViewOpenTraceButton } from './RunViewOpenTraceButton';
 import type { UseGetRunQueryResponseExperiment, UseGetRunQueryResponseOutputs } from './hooks/useGetRunQuery';
 import type { RunPageModelVersionSummary } from './hooks/useUnifiedRegisteredModelVersionsSummariesForRun';
 import { ExperimentKind } from '@mlflow/mlflow/src/experiment-tracking/constants';
@@ -197,6 +198,7 @@ export const RunViewHeader = ({
         /* prettier-ignore */
       >
         {renderCompareButton()}
+        <RunViewOpenTraceButton runUuid={runUuid} runName={runDisplayName} />
         {renderRegisterModelButton()}
         <OverflowMenu
           menu={[

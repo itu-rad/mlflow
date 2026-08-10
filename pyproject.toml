@@ -86,6 +86,9 @@ extras = [
   "prometheus-flask-exporter",
 ]
 db = ["PyMySQL", "psycopg2-binary", "pymssql"]
+# radT fork: server-side Perfetto trace export. Kept optional so the base wheel
+# is unchanged; the radT page reports a clear error when it is missing.
+radt = ["perfetto"]
 databricks = [
   "azure-storage-file-datalake>12",
   "google-cloud-storage>=1.30.0",
@@ -242,7 +245,8 @@ docs = [
 [tool.uv]
 exclude-newer = "P7D"
 exclude-newer-package = { torch = false, torchvision = false }
-required-version = ">=0.11.14"
+# radT fork: this machine is pinned to uv 0.11.8 for other projects.
+required-version = ">=0.11.8"
 constraint-dependencies = [
   # xgboost 3.1.0 changed base_score format to vector for multi-output models, breaking shap compatibility
   # https://xgboost.readthedocs.io/en/latest/changes/v3.1.0.html#multi-target-class-intercept

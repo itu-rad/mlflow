@@ -7584,6 +7584,41 @@ def _get_or_fetch_ui_telemetry_config():
     return config
 
 
+def _radt_trace_context():
+    """Resolves the run named by the request into (store, artifact_repo, run)."""
+    from mlflow.server import radt_trace
+
+    run_id = request.args.get("run_id") or (request.get_json(silent=True) or {}).get("run_id")
+    if not run_id:
+        raise MlflowException("run_id is required", INVALID_PARAMETER_VALUE)
+    store = _get_tracking_store()
+    run = store.get_run(run_id)
+    return radt_trace, store, _get_artifact_repo(run), run
+
+
+@catch_mlflow_exception
+def get_radt_trace_status_handler():
+    """Whether a Perfetto trace already exists, so the UI can label its button."""
+    radt_trace, store, artifact_repo, run = _radt_trace_context()
+    return jsonify(radt_trace.trace_status(store, artifact_repo, run))
+
+
+@catch_mlflow_exception
+def post_radt_trace_export_handler():
+    """Build the run's Perfetto trace, or return the cached one.
+
+    Synchronous: the artifact acts as the cache, so only the first open pays the
+    conversion cost.
+    """
+    radt_trace, store, artifact_repo, run = _radt_trace_context()
+    force = bool((request.get_json(silent=True) or {}).get("force"))
+    try:
+        artifact_path = radt_trace.export_trace(store, artifact_repo, run, force=force)
+    except radt_trace.RadtTraceError as exc:
+        raise MlflowException(str(exc), INVALID_PARAMETER_VALUE) from exc
+    return jsonify({"artifact_path": artifact_path})
+
+
 @catch_mlflow_exception
 def get_radt_config_handler():
     """

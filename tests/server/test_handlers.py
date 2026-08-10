@@ -466,6 +466,20 @@ def test_radt_config_normalizes_blank_values(monkeypatch, value, expected):
         assert response.get_json() == {"radt_url": expected}
 
 
+@pytest.mark.parametrize(
+    ("path", "method"),
+    [
+        ("/ajax-api/2.0/mlflow/radt-trace/status", "GET"),
+        ("/ajax-api/2.0/mlflow/radt-trace/export", "POST"),
+    ],
+)
+def test_radt_trace_endpoints_require_a_run_id(path, method):
+    with app.test_client() as c:
+        response = c.open(path, method=method, json={})
+        assert response.status_code == 400
+        assert "run_id is required" in response.get_data(as_text=True)
+
+
 # Reading the env var at import time would freeze the URL into the process, defeating
 # the point of shipping one wheel that can be repointed at any radT instance.
 def test_radt_config_is_read_per_request(monkeypatch):

@@ -49,8 +49,10 @@ from mlflow.server.handlers import (
     get_metric_history_bulk_interval_handler,
     get_model_version_artifact_handler,
     get_radt_config_handler,
+    get_radt_trace_status_handler,
     get_trace_artifact_handler,
     get_ui_telemetry_handler,
+    post_radt_trace_export_handler,
     post_ui_telemetry_handler,
     upload_artifact_handler,
 )
@@ -175,6 +177,16 @@ def serve_get_logged_model_artifact(model_id: str):
 @app.route(_add_static_prefix("/ajax-api/2.0/mlflow/radt-config"), methods=["GET"])
 def serve_get_radt_config():
     return get_radt_config_handler()
+
+
+@app.route(_add_static_prefix("/ajax-api/2.0/mlflow/radt-trace/status"), methods=["GET"])
+def serve_get_radt_trace_status():
+    return get_radt_trace_status_handler()
+
+
+@app.route(_add_static_prefix("/ajax-api/2.0/mlflow/radt-trace/export"), methods=["POST"])
+def serve_post_radt_trace_export():
+    return post_radt_trace_export_handler()
 
 
 @app.route(_add_static_prefix("/ajax-api/3.0/mlflow/ui-telemetry"), methods=["GET"])
