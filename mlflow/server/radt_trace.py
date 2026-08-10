@@ -99,6 +99,10 @@ def _radt_manifest(artifact_repo):
     try:
         entries = artifact_repo.list_artifacts(ARTIFACT_DIR)
     except Exception:
+        # A run without radT tracing simply has no such directory, so this is not
+        # an error -- but an unreachable artifact store looks identical from here,
+        # so leave a trail rather than silently reporting "no tracing" for both.
+        _logger.debug("radt-trace: could not list %s/", ARTIFACT_DIR, exc_info=True)
         return None
     names = {os.path.basename(entry.path) for entry in entries}
     if MANIFEST_NAME not in names:
@@ -305,6 +309,7 @@ def _existing_trace(artifact_repo):
     try:
         entries = artifact_repo.list_artifacts(ARTIFACT_DIR)
     except Exception:
+        _logger.debug("radt-trace: could not list %s/", ARTIFACT_DIR, exc_info=True)
         return False
     return any(os.path.basename(entry.path) == TRACE_NAME for entry in entries)
 

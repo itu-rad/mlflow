@@ -7584,6 +7584,33 @@ def _get_or_fetch_ui_telemetry_config():
     return config
 
 
+class _RunScopedArtifactRepo:
+    """Re-roots a proxied artifact repo at a single run.
+
+    When artifacts are served through ``mlflow-artifacts:``, the repo is shared
+    across runs and addressed by absolute destination paths. radt_trace works in
+    run-relative paths (``radt-trace/manifest.json``), so translate here and keep
+    that module unaware of how artifacts are stored.
+    """
+
+    def __init__(self, repo, prefix):
+        self._repo = repo
+        self._prefix = prefix
+
+    def _resolve(self, path):
+        resolved = _get_proxied_run_artifact_destination_path(self._prefix, path)
+        return _get_workspace_scoped_repo_path_if_enabled(resolved)
+
+    def list_artifacts(self, path=""):
+        return self._repo.list_artifacts(self._resolve(path))
+
+    def download_artifacts(self, path, dst_path):
+        return self._repo.download_artifacts(self._resolve(path), dst_path)
+
+    def log_artifact(self, local_file, artifact_path=None):
+        return self._repo.log_artifact(local_file, self._resolve(artifact_path))
+
+
 def _radt_trace_context():
     """Resolves the run named by the request into (store, artifact_repo, run)."""
     from mlflow.server import radt_trace
@@ -7593,7 +7620,17 @@ def _radt_trace_context():
         raise MlflowException("run_id is required", INVALID_PARAMETER_VALUE)
     store = _get_tracking_store()
     run = store.get_run(run_id)
-    return radt_trace, store, _get_artifact_repo(run), run
+
+    # Mirrors get_artifact_handler: a proxied root is not reachable by building a
+    # repository from the run's artifact_uri; it has to be resolved to the
+    # server's own storage location first.
+    if _is_servable_proxied_run_artifact_root(run.info.artifact_uri):
+        artifact_repo = _RunScopedArtifactRepo(
+            _get_artifact_repo_mlflow_artifacts(), run.info.artifact_uri
+        )
+    else:
+        artifact_repo = _get_artifact_repo(run)
+    return radt_trace, store, artifact_repo, run
 
 
 @catch_mlflow_exception
