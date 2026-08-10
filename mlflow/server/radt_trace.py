@@ -153,25 +153,43 @@ def _read_radt_spans(artifact_repo, manifest):
     return spans
 
 
-def _read_mlflow_spans(run_id, experiment_id):
-    """Spans recorded through the mlflow tracing API (the non-default backend)."""
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient()
-    trace_infos, _ = client._tracking_client.store.search_traces(
-        locations=[experiment_id],
-        filter_string=f"metadata.`mlflow.sourceRun` = '{run_id}'",
-        max_results=10000,
+def _search_run_traces(store, run, max_results):
+    return store.search_traces(
+        locations=[run.info.experiment_id],
+        filter_string=f"metadata.`mlflow.sourceRun` = '{run.info.run_id}'",
+        max_results=max_results,
     )
 
+
+def _trace_spans(store, trace_id):
+    """Spans for one trace, read straight from the tracking store.
+
+    Deliberately not via ``MlflowClient``: inside the server the ambient tracking
+    URI is the backend store (``postgresql://...``), so resolving a trace's
+    ``mlflow-artifacts:`` URI through a client raises. The store holds the spans.
+    """
+    try:
+        return store.get_trace(trace_id, allow_partial=True).data.spans
+    except Exception:
+        traces = store.batch_get_traces([trace_id], None)  # not every store has get_trace
+        return traces[0].data.spans if traces else []
+
+
+def _read_mlflow_spans(store, run):
+    """Spans recorded through the mlflow tracing API (the non-default backend)."""
+    trace_infos, _ = _search_run_traces(store, run, max_results=10000)
+
     spans = []
+    unreadable = 0
     for info in trace_infos:
         try:
-            trace = client.get_trace(info.trace_id, display=False)
+            trace_spans = _trace_spans(store, info.trace_id)
         except Exception:
-            _logger.exception("radt-trace: failed to fetch trace %s", info.trace_id)
+            # Counted, not logged per trace: a run can hold thousands, and a
+            # systemic failure would otherwise flood the server log.
+            unreadable += 1
             continue
-        for span in trace.data.spans:
+        for span in trace_spans:
             attributes = dict(span.attributes or {})
             attributes["__trace_id"] = info.trace_id
             spans.append(
@@ -182,6 +200,13 @@ def _read_mlflow_spans(run_id, experiment_id):
                     attributes=attributes,
                 )
             )
+    if unreadable:
+        _logger.warning(
+            "radt-trace: %d of %d traces for run %s could not be read",
+            unreadable,
+            len(trace_infos),
+            run.info.run_id,
+        )
     return spans
 
 
@@ -308,22 +333,17 @@ def _existing_trace(artifact_repo):
     return any(os.path.basename(entry.path) == TRACE_NAME for entry in entries)
 
 
-def _has_mlflow_spans(run):
+def _has_mlflow_spans(store, run):
     """Whether the run has any mlflow-tracing spans, without fetching them.
 
     Asks for a single trace: this runs on every run-page load, and the UI only
     needs to know whether exporting is possible at all.
     """
-    from mlflow.tracking import MlflowClient
-
     try:
-        infos, _ = MlflowClient()._tracking_client.store.search_traces(
-            locations=[run.info.experiment_id],
-            filter_string=f"metadata.`mlflow.sourceRun` = '{run.info.run_id}'",
-            max_results=1,
-        )
-    except Exception:  # absence is the answer the UI needs; don't fail the page
-        _logger.exception("radt-trace: mlflow trace lookup failed for %s", run.info.run_id)
+        infos, _ = _search_run_traces(store, run, max_results=1)
+    except Exception:
+        # Absence is a usable answer for the UI; never fail a run page over this.
+        _logger.debug("radt-trace: trace lookup failed for %s", run.info.run_id, exc_info=True)
         return False
     return bool(infos)
 
@@ -342,7 +362,7 @@ def trace_status(store, artifact_repo, run):
         }
     if _radt_manifest(artifact_repo):
         source = "radt"
-    elif _has_mlflow_spans(run):
+    elif _has_mlflow_spans(store, run):
         source = "mlflow"
     else:
         source = None
@@ -358,7 +378,7 @@ def export_trace(store, artifact_repo, run, force=False):
     if manifest is not None:
         spans = _read_radt_spans(artifact_repo, manifest)
     else:
-        spans = _read_mlflow_spans(run.info.run_id, run.info.experiment_id)
+        spans = _read_mlflow_spans(store, run)
 
     if not spans:
         raise RadtTraceError(

@@ -234,14 +234,14 @@ def test_status_reports_radt_source_before_export(artifact_repo, tmp_path):
 def test_status_reports_mlflow_source_when_only_tracing_spans_exist(
     artifact_repo, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda run: True)
+    monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda store, run: True)
     status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
     assert status == {"available": False, "source": "mlflow", "artifact_path": None}
 
 
 # A null source is how the UI knows to hide the button entirely.
 def test_status_reports_no_source_when_the_run_has_no_spans(artifact_repo, tmp_path, monkeypatch):
-    monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda run: False)
+    monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda store, run: False)
     status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
     assert status == {"available": False, "source": None, "artifact_path": None}
 
