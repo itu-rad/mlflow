@@ -143,9 +143,8 @@ def test_empty_span_list_still_serialises():
 
 def test_unknown_schema_version_is_refused(artifact_repo, tmp_path):
     write_batches(tmp_path, [["s", 1, None, 1, "a", {}, 10]], schema_version=999)
-    manifest = radt_trace._radt_manifest(artifact_repo)
     with pytest.raises(RadtTraceError, match="schema version 999 is not supported"):
-        radt_trace._read_radt_spans(artifact_repo, manifest)
+        radt_trace._radt_batches(artifact_repo)
 
 
 def test_starts_and_ends_are_paired_into_spans(artifact_repo, tmp_path):
@@ -154,7 +153,7 @@ def test_starts_and_ends_are_paired_into_spans(artifact_repo, tmp_path):
         [["s", 1, None, 1, "work", {"thread_id": 0}, 100], ["e", 1, 900]],
     )
     manifest = radt_trace._radt_manifest(artifact_repo)
-    spans = radt_trace._read_radt_spans(artifact_repo, manifest)
+    spans = radt_trace._read_radt_spans(artifact_repo, manifest["batches"])
 
     assert len(spans) == 1
     assert (spans[0].name, spans[0].start_ns, spans[0].end_ns) == ("work", 100, 900)
@@ -164,13 +163,55 @@ def test_starts_and_ends_are_paired_into_spans(artifact_repo, tmp_path):
 def test_unclosed_span_becomes_zero_length(artifact_repo, tmp_path):
     write_batches(tmp_path, [["s", 1, None, 1, "killed", {}, 100]])
     manifest = radt_trace._radt_manifest(artifact_repo)
-    spans = radt_trace._read_radt_spans(artifact_repo, manifest)
+    spans = radt_trace._read_radt_spans(artifact_repo, manifest["batches"])
 
     assert (spans[0].start_ns, spans[0].end_ns) == (100, 100)
 
 
 def test_missing_manifest_reports_no_radt_tracing(artifact_repo):
     assert radt_trace._radt_manifest(artifact_repo) is None
+
+
+# radt writes the manifest last, so a kill mid-run leaves readable batches
+# behind. Those are worth recovering rather than discarding.
+def test_batches_are_salvaged_without_a_manifest(artifact_repo, tmp_path):
+    write_batches(tmp_path, [["s", 1, None, 1, "work", {}, 100], ["e", 1, 900]])
+    (tmp_path / radt_trace.ARTIFACT_DIR / radt_trace.MANIFEST_NAME).unlink()
+
+    batches, complete = radt_trace._radt_batches(artifact_repo)
+    assert batches == ["spans-000001.jsonl.gz"]
+    assert complete is False
+    assert len(radt_trace._read_radt_spans(artifact_repo, batches)) == 1
+
+
+def test_salvaged_batches_still_export(artifact_repo, tmp_path):
+    write_batches(tmp_path, [["s", 1, None, 1, "work", {"thread_id": 0}, 100], ["e", 1, 900]])
+    (tmp_path / radt_trace.ARTIFACT_DIR / radt_trace.MANIFEST_NAME).unlink()
+
+    path = radt_trace.export_trace(_Store(), artifact_repo, _run(tmp_path))
+    assert path == f"{radt_trace.ARTIFACT_DIR}/{radt_trace.TRACE_NAME}"
+    payload = (tmp_path / radt_trace.ARTIFACT_DIR / radt_trace.TRACE_NAME).read_bytes()
+    assert len(events_of(parse(payload), TrackEvent.TYPE_SLICE_BEGIN)) == 1
+
+
+def test_status_marks_a_salvaged_trace_partial(artifact_repo, tmp_path):
+    write_batches(tmp_path, [["s", 1, None, 1, "work", {}, 100], ["e", 1, 900]])
+    (tmp_path / radt_trace.ARTIFACT_DIR / radt_trace.MANIFEST_NAME).unlink()
+
+    status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
+    assert status["source"] == "radt"
+    assert status["partial"] is True
+
+
+def test_an_unreadable_batch_does_not_lose_the_others(artifact_repo, tmp_path):
+    write_batches(tmp_path, [["s", 1, None, 1, "kept", {}, 100], ["e", 1, 900]])
+    directory = tmp_path / radt_trace.ARTIFACT_DIR
+    (directory / radt_trace.MANIFEST_NAME).unlink()
+    (directory / "spans-000002.jsonl.gz").write_bytes(b"not gzip at all")
+
+    batches, _ = radt_trace._radt_batches(artifact_repo)
+    spans = radt_trace._read_radt_spans(artifact_repo, batches)
+    assert [s.name for s in spans] == ["kept"]
 
 
 # --- orchestration --------------------------------------------------------
@@ -228,7 +269,7 @@ def test_export_without_spans_explains_itself(artifact_repo, tmp_path, monkeypat
 def test_status_reports_radt_source_before_export(artifact_repo, tmp_path):
     write_batches(tmp_path, [["s", 1, None, 1, "work", {}, 100], ["e", 1, 900]])
     status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
-    assert status == {"available": False, "source": "radt", "artifact_path": None}
+    assert status == {"available": False, "source": "radt", "artifact_path": None, "partial": False}
 
 
 def test_status_reports_mlflow_source_when_only_tracing_spans_exist(
@@ -236,14 +277,19 @@ def test_status_reports_mlflow_source_when_only_tracing_spans_exist(
 ):
     monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda store, run: True)
     status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
-    assert status == {"available": False, "source": "mlflow", "artifact_path": None}
+    assert status == {
+        "available": False,
+        "source": "mlflow",
+        "artifact_path": None,
+        "partial": False,
+    }
 
 
 # A null source is how the UI knows to hide the button entirely.
 def test_status_reports_no_source_when_the_run_has_no_spans(artifact_repo, tmp_path, monkeypatch):
     monkeypatch.setattr(radt_trace, "_has_mlflow_spans", lambda store, run: False)
     status = radt_trace.trace_status(_Store(), artifact_repo, _run(tmp_path))
-    assert status == {"available": False, "source": None, "artifact_path": None}
+    assert status == {"available": False, "source": None, "artifact_path": None, "partial": False}
 
 
 def test_status_reports_available_after_export(artifact_repo, tmp_path):

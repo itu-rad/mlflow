@@ -1,13 +1,9 @@
 """Perfetto trace export for radT runs.
 
-A run's spans reach the server one of two ways: radT's batch tracing uploads
-them as gzipped JSONL artifacts, or mlflow tracing writes them through the
-tracing API. Both are normalised to :class:`_Span` here so a single converter
-produces the ``.pftrace``, which is written back as a run artifact and served
-to the Perfetto UI.
-
-The built trace is cached as an artifact: exporting is idempotent, and a second
-"open trace" costs a lookup rather than a rebuild.
+Spans reach the server either as radT's gzipped JSONL artifacts or through the
+mlflow tracing API. Both are normalised to :class:`_Span` so one converter
+produces the ``.pftrace``, which is stored back as a run artifact -- so export
+is idempotent and a second "open trace" costs a lookup, not a rebuild.
 """
 
 import gzip
@@ -51,12 +47,11 @@ class _Span:
 
     @property
     def track_key(self):
-        """Spans are laid out on a track per workload thread.
+        """One track per workload thread.
 
-        ``thread_id`` is set by the workload, not by radt, so it is frequently
-        absent. Falling back to the trace id keeps those spans on the timeline
-        instead of dropping them -- and since a thread's spans share a root
-        trace, the grouping stays meaningful.
+        ``thread_id`` comes from the workload and is often absent; falling back
+        to the trace id keeps those spans on the timeline rather than dropping
+        them, and a thread's spans share a root trace anyway.
         """
         thread_id = self.attributes.get("thread_id")
         if thread_id is not None:
@@ -93,12 +88,7 @@ def _flow_id(value):
 # --- span sources ---------------------------------------------------------
 
 
-def _radt_manifest(artifact_repo):
-    """The manifest, or None when this run has no radT batch tracing.
-
-    radt writes it last, so its absence also distinguishes an interrupted upload
-    from a complete one.
-    """
+def _artifact_names(artifact_repo):
     try:
         entries = artifact_repo.list_artifacts(ARTIFACT_DIR)
     except Exception:
@@ -106,8 +96,18 @@ def _radt_manifest(artifact_repo):
         # an error -- but an unreachable artifact store looks identical from here,
         # so leave a trail rather than silently reporting "no tracing" for both.
         _logger.debug("radt-trace: could not list %s/", ARTIFACT_DIR, exc_info=True)
-        return None
-    names = {os.path.basename(entry.path) for entry in entries}
+        return set()
+    return {os.path.basename(entry.path) for entry in entries}
+
+
+def _radt_manifest(artifact_repo, names=None):
+    """The manifest, or None if it never arrived.
+
+    radt writes it last, so its absence means the run was killed before the
+    upload finished -- the batches already up are still usable, see
+    :func:`_radt_batches`.
+    """
+    names = _artifact_names(artifact_repo) if names is None else names
     if MANIFEST_NAME not in names:
         return None
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,29 +116,58 @@ def _radt_manifest(artifact_repo):
             return json.load(handle)
 
 
-def _read_radt_spans(artifact_repo, manifest):
-    version = manifest.get("schema_version")
-    if version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise RadtTraceError(
-            f"radT trace schema version {version} is not supported by this server "
-            f"(supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}). Upgrade MLflow."
-        )
+def _radt_batches(artifact_repo):
+    """Batch names to read, and whether the trace is known to be complete.
 
+    Prefers the manifest's list. Without one, falls back to whatever batches
+    are present: radt names them with a zero-padded sequence, so sorting
+    restores upload order, and each is independently readable. The trace is
+    then partial -- a run killed mid-flight -- but partial beats nothing.
+    """
+    names = _artifact_names(artifact_repo)
+    manifest = _radt_manifest(artifact_repo, names)
+    if manifest is not None:
+        version = manifest.get("schema_version")
+        if version not in SUPPORTED_SCHEMA_VERSIONS:
+            raise RadtTraceError(
+                f"radT trace schema version {version} is not supported by this server "
+                f"(supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}). Upgrade MLflow."
+            )
+        return manifest.get("batches", []), True
+
+    salvaged = sorted(
+        name for name in names if name.startswith("spans-") and name.endswith(".jsonl.gz")
+    )
+    if salvaged:
+        _logger.warning(
+            "radt-trace: no %s; salvaging %d batch(es) -- the run did not finish uploading",
+            MANIFEST_NAME,
+            len(salvaged),
+        )
+    return salvaged, False
+
+
+def _read_radt_spans(artifact_repo, batch_names):
     starts = {}
     ends = {}
     trace_ids = {}
     with tempfile.TemporaryDirectory() as tmp:
-        for name in manifest.get("batches", []):
-            local = artifact_repo.download_artifacts(f"{ARTIFACT_DIR}/{name}", tmp)
-            with gzip.open(local, "rt", encoding="utf-8") as handle:
-                for line in handle:
-                    record = json.loads(line)
-                    if record[0] == "s":
-                        _, span_id, _parent, trace_id, span_name, attrs, ts = record
-                        starts[span_id] = (span_name, attrs or {}, ts)
-                        trace_ids[span_id] = trace_id
-                    elif record[0] == "e":
-                        ends[record[1]] = record[2]
+        for name in batch_names:
+            try:
+                local = artifact_repo.download_artifacts(f"{ARTIFACT_DIR}/{name}", tmp)
+                with gzip.open(local, "rt", encoding="utf-8") as handle:
+                    for line in handle:
+                        record = json.loads(line)
+                        if record[0] == "s":
+                            _, span_id, _parent, trace_id, span_name, attrs, ts = record
+                            starts[span_id] = (span_name, attrs or {}, ts)
+                            trace_ids[span_id] = trace_id
+                        elif record[0] == "e":
+                            ends[record[1]] = record[2]
+            except Exception:
+                # A batch truncated by a kill, or listed but never uploaded.
+                # Keep the rest rather than losing the whole trace.
+                _logger.warning("radt-trace: skipping unreadable batch %s", name, exc_info=True)
 
     spans = []
     for span_id, (name, attrs, start_ns) in starts.items():
@@ -211,10 +240,10 @@ def _read_mlflow_spans(store, run):
 
 
 def _read_metrics(store, run):
-    """Metric history per key, as counter tracks.
+    """Metric history per key, for Perfetto counter tracks.
 
-    Goes through the tracking store rather than a direct database connection so
-    this works on any backend and needs no separate credentials.
+    Via the tracking store rather than a direct database connection, so any
+    backend works and no separate credentials are needed.
     """
     series = {}
     for key in run.data.metrics:
@@ -353,20 +382,30 @@ def trace_status(store, artifact_repo, run):
 
     ``source`` is where an export would read from; ``None`` means there is
     nothing to export, which is how the UI decides whether to offer the button.
+    ``partial`` marks a run killed before its manifest was uploaded, whose
+    batches are still readable.
     """
+    batches, complete = _radt_batches(artifact_repo)
+
     if _existing_trace(artifact_repo):
         return {
             "available": True,
-            "source": "radt" if _radt_manifest(artifact_repo) else "mlflow",
+            "source": "radt" if batches else "mlflow",
             "artifact_path": f"{ARTIFACT_DIR}/{TRACE_NAME}",
+            "partial": bool(batches) and not complete,
         }
-    if _radt_manifest(artifact_repo):
+    if batches:
         source = "radt"
     elif _has_mlflow_spans(store, run):
         source = "mlflow"
     else:
         source = None
-    return {"available": False, "source": source, "artifact_path": None}
+    return {
+        "available": False,
+        "source": source,
+        "artifact_path": None,
+        "partial": bool(batches) and not complete,
+    }
 
 
 def export_trace(store, artifact_repo, run, force=False):
@@ -374,9 +413,15 @@ def export_trace(store, artifact_repo, run, force=False):
     if not force and _existing_trace(artifact_repo):
         return f"{ARTIFACT_DIR}/{TRACE_NAME}"
 
-    manifest = _radt_manifest(artifact_repo)
-    if manifest is not None:
-        spans = _read_radt_spans(artifact_repo, manifest)
+    batches, complete = _radt_batches(artifact_repo)
+    if batches:
+        spans = _read_radt_spans(artifact_repo, batches)
+        if not complete:
+            _logger.warning(
+                "radt-trace: exporting %d span(s) from an unfinished upload for run %s",
+                len(spans),
+                run.info.run_id,
+            )
     else:
         spans = _read_mlflow_spans(store, run)
 
