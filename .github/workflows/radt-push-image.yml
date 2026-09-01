@@ -1,0 +1,107 @@
+# Publish the radT fork's MLflow server image to ghcr.io, so radT's
+# docker-compose stack can offer it as an alternative to the upstream image
+# without anyone having to check out this repository.
+name: radt-push-image
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "mlflow/**"
+      - "pyproject.toml"
+      - "requirements/**"
+      - "docker/Dockerfile.radt"
+      - ".github/workflows/radt-push-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions: {}
+
+jobs:
+  push-image:
+    runs-on: ubuntu-latest
+    # The UI build dominates; the arm64 leg runs pip under emulation.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-python
+      - uses: ./.github/actions/setup-node
+
+      - name: Build UI
+        working-directory: mlflow/server/js
+        run: |
+          yarn install --immutable
+          yarn build
+
+      - name: Build wheel
+        run: |
+          uv pip install --system build setuptools wheel
+          python dev/build.py --package-type dev --sha "$(git rev-parse HEAD)"
+          # `docker` is the build context: keeping it tiny avoids uploading the
+          # checkout (including node_modules) to the daemon.
+          mkdir -p docker/dist
+          cp dist/*.whl docker/dist/
+          ls -lh docker/dist
+
+      # `--package-type dev` does not enforce this, and a wheel built without a
+      # prior `yarn build` yields a server that 404s on every UI route.
+      - name: Verify the wheel carries the UI bundle
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          wheel = glob.glob("docker/dist/mlflow*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          if not any(n.startswith("mlflow/server/js/build/") for n in names):
+              sys.exit(f"UI assets missing from {wheel}")
+          print(f"{wheel}: UI assets present")
+          PY
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Gather Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: docker
+          file: docker/Dockerfile.radt
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64

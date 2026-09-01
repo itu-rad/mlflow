@@ -1,0 +1,16 @@
+# radT fork image: an MLflow server carrying the radT trace endpoints and the
+# run-page trace viewer.
+#
+# Built from a wheel rather than the source tree because the compiled JS bundle
+# only exists inside the wheel -- `pip install .` on a clean checkout produces a
+# server with no UI. Run `python dev/build.py --package-type dev` (after
+# `yarn build` in mlflow/server/js) and drop the wheel in `docker/dist/` first.
+FROM python:3.10-slim-bullseye@sha256:f1fb49e4d5501ac93d0ca519fb7ee6250842245aba8612926a46a0832a1ed089
+
+# Postgres and S3 drivers are baked in so consumers of this image do not pay a
+# pip install on every container start, unlike the upstream image.
+COPY dist/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir /tmp/wheels/*.whl psycopg2-binary boto3 \
+    && rm -rf /tmp/wheels
+
+EXPOSE 5000
